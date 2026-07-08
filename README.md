@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="media/branding/stream-prime-logo.png" alt="Stream Prime logo" width="520">
+</p>
+
 # Stream Prime
 
 > A free and open-source Android live streaming app with RTMP broadcasting, custom overlays, screen capture, file streaming, and creator-friendly mobile controls.
