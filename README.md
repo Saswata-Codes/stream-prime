@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="media/branding/stream-prime-logo.png" alt="Stream Prime logo" width="520">
-</p>
-
 # Stream Prime
 
 > A free and open-source Android live streaming app with RTMP broadcasting, custom overlays, screen capture, file streaming, and creator-friendly mobile controls.
@@ -13,6 +9,11 @@
 [![Open Source](https://img.shields.io/badge/open%20source-free-brightgreen.svg)](#contributing)
 
 Stream Prime is a developer-friendly mobile live-streaming app for Android creators, gamers, and builders who need a flexible RTMP streaming app with a beautiful UI and custom overlay support. It is built on top of RootEncoder-powered streaming and encoding modules, making it a strong starting point for an Android RTMP broadcaster, mobile broadcasting app, or custom overlay streaming app.
+
+<p align="center">
+  <img src="media/branding/stream-prime-logo.png" alt="Stream Prime logo" width="52">
+</p>
+
 
 ## ✨ Features
 
