@@ -11,7 +11,7 @@
 Stream Prime is a developer-friendly mobile live-streaming app for Android creators, gamers, and builders who need a flexible RTMP streaming app with a beautiful UI and custom overlay support. It is built on top of RootEncoder-powered streaming and encoding modules, making it a strong starting point for an Android RTMP broadcaster, mobile broadcasting app, or custom overlay streaming app.
 
 <p align="center">
-  <img src="media/branding/stream-prime-logo.png" alt="Stream Prime logo" width="52">
+  <img src="media/branding/stream-prime-logo.png" alt="Stream Prime logo" width="208">
 </p>
 
 
