@@ -1,0 +1,277 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/md_theme_background">
+
+    <!-- Stream Configuration Panel -->
+    <androidx.cardview.widget.CardView
+        android:id="@+id/stream_config_panel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_margin="16dp"
+        app:cardBackgroundColor="@color/md_theme_tertiaryContainer"
+        app:cardCornerRadius="16dp"
+        app:cardElevation="12dp"
+        android:visibility="visible">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="20dp">
+
+            <!-- Panel Title with Settings Button -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="16dp">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="File Stream Config"
+                    android:textColor="@color/white"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
+
+                <!-- Settings Gear Icon -->
+                <com.google.android.material.floatingactionbutton.FloatingActionButton
+                    android:id="@+id/b_settings"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:src="@drawable/ic_settings"
+                    app:backgroundTint="@color/md_theme_secondary"
+                    app:tint="@color/white"
+                    app:fabSize="mini"
+                    app:rippleColor="@color/md_theme_secondary" />
+
+            </LinearLayout>
+
+            <!-- Streaming Service Selection -->
+            <com.google.android.material.textfield.TextInputLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                android:hint="@string/streaming_service_label"
+                app:hintTextColor="@color/white"
+                app:boxStrokeColor="@color/white"
+                app:boxStrokeWidth="2dp"
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu">
+
+                <AutoCompleteTextView
+                    android:id="@+id/spinner_streaming_service"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:inputType="none"
+                    android:textColor="@color/white"
+                    android:textColorHint="@color/md_theme_onSurfaceVariant"
+                    android:text="YouTube Live" />
+
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <!-- Server URL Input -->
+            <com.google.android.material.textfield.TextInputLayout
+                android:id="@+id/til_stream_url"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                android:hint="@string/stream_url_label"
+                app:hintTextColor="@color/white"
+                app:boxStrokeColor="@color/white"
+                app:boxStrokeWidth="2dp"
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/et_stream_url"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="@string/hint_protocol"
+                    android:textColor="@color/white"
+                    android:textColorHint="@color/md_theme_onSurfaceVariant"
+                    android:inputType="textUri"
+                    android:text="rtmp://your-server.com/live/" />
+
+            </com.google.android.material.textfield.TextInputLayout>
+
+            <!-- Stream Key Input -->
+            <com.google.android.material.textfield.TextInputLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="16dp"
+                android:hint="@string/stream_key_label"
+                app:hintTextColor="@color/white"
+                app:boxStrokeColor="@color/white"
+                app:boxStrokeWidth="2dp"
+                app:passwordToggleEnabled="true"
+                app:passwordToggleTint="@color/white"
+                style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
+
+                <com.google.android.material.textfield.TextInputEditText
+                    android:id="@+id/et_stream_key"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="@string/hint_stream_key"
+                    android:textColor="@color/white"
+                    android:textColorHint="@color/md_theme_onSurfaceVariant"
+                    android:inputType="textPassword" />
+
+            </com.google.android.material.textfield.TextInputLayout>
+
+        </LinearLayout>
+
+    </androidx.cardview.widget.CardView>
+
+    <!-- File Selection Display -->
+    <TextView
+        android:id="@+id/tv_file_name"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="No file selected"
+        android:textColor="@color/white"
+        android:textSize="14sp"
+        android:gravity="center"
+        android:padding="8dp"
+        android:background="@drawable/status_offline"
+        android:layout_marginHorizontal="16dp"
+        android:layout_marginBottom="8dp" />
+
+    <!-- Status Bar -->
+    <LinearLayout
+        android:id="@+id/status_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="12dp"
+        android:gravity="center_vertical"
+        android:background="@color/surface_dark"
+        android:layout_marginHorizontal="16dp"
+        android:layout_marginBottom="8dp">
+
+        <View
+            android:id="@+id/status_indicator"
+            android:layout_width="12dp"
+            android:layout_height="12dp"
+            android:background="@drawable/status_offline"
+            android:layout_marginEnd="12dp" />
+
+        <TextView
+            android:id="@+id/txt_status"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Ready to stream"
+            android:textColor="@color/md_theme_onSurface"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/txt_bitrate"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="0.0 Mbps"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp" />
+
+    </LinearLayout>
+
+    <!-- Video Preview Surface -->
+    <com.pedro.library.view.OpenGlView
+        android:id="@+id/surfaceView"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        app:aspectRatioMode="adjust" />
+
+    <!-- Control Panel -->
+    <androidx.cardview.widget.CardView
+        android:id="@+id/control_panel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_margin="16dp"
+        app:cardBackgroundColor="@color/md_theme_surface"
+        app:cardCornerRadius="16dp"
+        app:cardElevation="8dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="20dp">
+
+            <!-- Media Controls -->
+            <LinearLayout
+                android:id="@+id/ll_media_bar"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="16dp">
+
+                <com.google.android.material.floatingactionbutton.FloatingActionButton
+                    android:id="@+id/b_re_sync"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:src="@drawable/sync_icon"
+                    app:backgroundTint="@color/neon_yellow"
+                    app:tint="@color/white"
+                    app:fabSize="mini"
+                    android:layout_marginEnd="16dp" />
+
+                <SeekBar
+                    android:id="@+id/seek_bar"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:progressTint="@color/neon_blue"
+                    android:thumbTint="@color/neon_blue" />
+
+            </LinearLayout>
+
+            <!-- Action Buttons -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center">
+
+                <com.google.android.material.floatingactionbutton.FloatingActionButton
+                    android:id="@+id/b_record"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:src="@drawable/record_icon"
+                    app:backgroundTint="@color/md_theme_error"
+                    app:tint="@color/white"
+                    app:fabSize="normal"
+                    android:layout_marginEnd="16dp" />
+
+                <com.google.android.material.floatingactionbutton.FloatingActionButton
+                    android:id="@+id/b_start_stop"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:src="@drawable/stream_icon"
+                    app:backgroundTint="@color/md_theme_secondary"
+                    app:tint="@color/white"
+                    app:fabSize="normal"
+                    android:layout_marginEnd="16dp" />
+
+                <com.google.android.material.floatingactionbutton.FloatingActionButton
+                    android:id="@+id/select_file"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:src="@drawable/file_search_icon"
+                    app:backgroundTint="@color/md_theme_primary"
+                    app:tint="@color/white"
+                    app:fabSize="normal" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </androidx.cardview.widget.CardView>
+
+</LinearLayout>

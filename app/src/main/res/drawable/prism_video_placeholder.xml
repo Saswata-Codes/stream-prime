@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <gradient
+        android:startColor="@color/prism_dark_surface"
+        android:centerColor="@color/prism_dark_surface_variant"
+        android:endColor="@color/prism_dark_background"
+        android:angle="45" />
+    <corners android:radius="24dp" />
+</shape> 

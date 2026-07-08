@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  xmlns:app="http://schemas.android.com/apk/res-auto"
+  android:layout_width="match_parent"
+  android:layout_height="match_parent"
+  android:orientation="vertical"
+  android:padding="16dp"
+  android:background="@color/prism_dark_background">
+
+  <LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:layout_marginBottom="16dp">
+
+    <TextView
+      android:layout_width="0dp"
+      android:layout_height="wrap_content"
+      android:layout_weight="1"
+      android:text="Overlay Layers"
+      android:textColor="@color/prism_text_primary"
+      android:textSize="24sp"
+      android:textStyle="bold" />
+
+    <Switch
+      android:id="@+id/switch_enabled"
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:text="Enabled"
+      android:textColor="@color/prism_text_primary" />
+
+  </LinearLayout>
+
+  <TextView
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:text="Drag layers to reorder. Higher layers appear on top."
+    android:textColor="@color/prism_text_secondary"
+    android:textSize="12sp"
+    android:layout_marginBottom="8dp" />
+
+  <androidx.cardview.widget.CardView
+    android:layout_width="match_parent"
+    android:layout_height="200dp"
+    android:layout_marginBottom="12dp"
+    app:cardBackgroundColor="@color/prism_dark_surface"
+    app:cardCornerRadius="8dp"
+    app:cardElevation="2dp">
+
+    <com.stream.prime.overlay.OverlayPreviewView
+      android:id="@+id/preview_overlay"
+      android:layout_width="match_parent"
+      android:layout_height="match_parent"
+      android:layout_margin="4dp" />
+
+  </androidx.cardview.widget.CardView>
+
+  <androidx.recyclerview.widget.RecyclerView
+    android:id="@+id/recycler_layers"
+    android:layout_width="match_parent"
+    android:layout_height="0dp"
+    android:layout_weight="1"
+    android:scrollbars="vertical" />
+
+  <LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center"
+    android:paddingTop="12dp">
+
+    <TextView
+      android:id="@+id/btn_add_layer"
+      android:layout_width="0dp"
+      android:layout_height="48dp"
+      android:layout_weight="1"
+      android:gravity="center"
+      android:text="Add Layer"
+      android:textColor="@color/prism_text_primary"
+      android:background="@drawable/prism_circular_button" />
+
+    <View
+      android:layout_width="12dp"
+      android:layout_height="1dp" />
+
+    <TextView
+      android:id="@+id/btn_save"
+      android:layout_width="0dp"
+      android:layout_height="48dp"
+      android:layout_weight="1"
+      android:gravity="center"
+      android:text="Save"
+      android:textColor="@color/prism_text_primary"
+      android:background="@drawable/prism_circular_button" />
+
+  </LinearLayout>
+
+</LinearLayout>

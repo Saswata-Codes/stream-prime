@@ -1,0 +1,78 @@
+plugins {
+  alias(libs.plugins.android.library)
+  alias(libs.plugins.jetbrains.kotlin)
+  id(libs.plugins.maven.publish.get().pluginId)
+  alias(libs.plugins.jetbrains.dokka)
+}
+
+android {
+  namespace = "com.pedro.library"
+  compileSdk = 36
+
+  defaultConfig {
+    minSdk = 16
+    lint.targetSdk = 36
+    
+    // NDK configuration for 16 KB page size support
+    ndk {
+      // Use the latest NDK version for 16 KB page size support
+      version = "26.1.10909125"
+    }
+  }
+  
+  buildTypes {
+    release {
+      isMinifyEnabled = false
+    }
+  }
+  
+  compileOptions {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+  }
+  
+  kotlin {
+    jvmToolchain(17)
+  }
+  
+  // Enhanced packaging configuration for 16 KB page size support
+  packaging {
+    jniLibs {
+      useLegacyPackaging = false
+    }
+  }
+  
+  // NDK build configuration
+  ndkVersion = "26.1.10909125"
+  
+  publishing {
+    singleVariant("release")
+  }
+}
+
+afterEvaluate {
+  publishing {
+    publications {
+      // Creates a Maven publication called "release".
+      create<MavenPublication>("release") {
+        // Applies the component for the release build variant.
+        from(components["release"])
+
+        // You can then customize attributes of the publication as shown below.
+        groupId = libs.versions.libraryGroup.get()
+        artifactId = "library"
+        version = libs.versions.versionName.get()
+      }
+    }
+  }
+}
+
+dependencies {
+  implementation(libs.kotlinx.coroutines.android)
+  api(project(":encoder"))
+  api(project(":rtmp"))
+  api(project(":rtsp"))
+  api(project(":srt"))
+  api(project(":udp"))
+  api(project(":common"))
+}

@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Material Design 3 Colors (Example Palette - Adjust as needed) -->
+    <color name="md_theme_primary">#6750A4</color>
+    <color name="md_theme_onPrimary">#FFFFFF</color>
+    <color name="md_theme_primaryContainer">#E9DDFF</color>
+    <color name="md_theme_onPrimaryContainer">#21005D</color>
+    <color name="md_theme_secondary">#625B71</color>
+    <color name="md_theme_onSecondary">#FFFFFF</color>
+    <color name="md_theme_secondaryContainer">#E8DEF8</color>
+    <color name="md_theme_onSecondaryContainer">#1D192B</color>
+    <color name="md_theme_tertiary">#7D5260</color>
+    <color name="md_theme_onTertiary">#FFFFFF</color>
+    <color name="md_theme_tertiaryContainer">#FFD8E4</color>
+    <color name="md_theme_onTertiaryContainer">#31111D</color>
+    <color name="md_theme_error">#BA1A1A</color>
+    <color name="md_theme_onError">#FFFFFF</color>
+    <color name="md_theme_errorContainer">#FFDAD6</color>
+    <color name="md_theme_onErrorContainer">#410002</color>
+    <color name="md_theme_background">#FFFBFF</color>
+    <color name="md_theme_onBackground">#1C1B1F</color>
+    <color name="md_theme_surface">#FFFBFF</color>
+    <color name="md_theme_onSurface">#1C1B1F</color>
+    <color name="md_theme_surfaceVariant">#E7E0EC</color>
+    <color name="md_theme_onSurfaceVariant">#49454F</color>
+    <color name="md_theme_outline">#7A757F</color>
+    <color name="md_theme_inverseOnSurface">#F4EFF4</color>
+    <color name="md_theme_inverseSurface">#313034</color>
+    <color name="md_theme_inversePrimary">#CFBCFF</color>
+    <color name="md_theme_shadow">#000000</color>
+    <color name="md_theme_surfaceTint">#6750A4</color>
+    <color name="md_theme_outlineVariant">#CAC4D0</color>
+    <color name="md_theme_scrim">#000000</color>
+
+    <!-- Custom/Legacy Colors (map to Material Design 3 as appropriate) -->
+    <color name="white">#FFFFFF</color>
+    <color name="black">#000000</color>
+    <color name="purple_200">#FFBB86FC</color>
+    <color name="purple_500">#FF6200EE</color>
+    <color name="purple_700">#FF3700B3</color>
+    <color name="teal_200">#FF03DAC5</color>
+    <color name="teal_700">#FF018786</color>
+
+    <!-- Mapping old names to new Material Design 3 names -->
+    <color name="colorPrimary">@color/md_theme_primary</color>
+    <color name="colorPrimaryVariant">@color/md_theme_primaryContainer</color>
+    <color name="colorOnPrimary">@color/md_theme_onPrimary</color>
+    <color name="colorSecondary">@color/md_theme_secondary</color>
+    <color name="colorSecondaryVariant">@color/md_theme_secondaryContainer</color>
+    <color name="colorOnSecondary">@color/md_theme_onSecondary</color>
+    <color name="colorBackground">@color/md_theme_background</color>
+    <color name="colorSurface">@color/md_theme_surface</color>
+    <color name="colorError">@color/md_theme_error</color>
+    <color name="colorOnBackground">@color/md_theme_onBackground</color>
+    <color name="colorOnSurface">@color/md_theme_onSurface</color>
+    <color name="colorOnError">@color/md_theme_onError</color>
+
+    <!-- Direct aliases for commonly used colors -->
+    <color name="primary">@color/md_theme_primary</color>
+    <color name="secondary">@color/md_theme_secondary</color>
+    <color name="error">@color/md_theme_error</color>
+    <color name="background">@color/md_theme_background</color>
+    <color name="surface">@color/md_theme_surface</color>
+    <color name="surface_variant">@color/md_theme_surfaceVariant</color>
+
+    <!-- Specific colors from previous errors, mapped or defined -->
+    <color name="overlay_medium">#33000000</color> <!-- Example: 20% black overlay -->
+    <color name="error_variant">@color/md_theme_errorContainer</color>
+    <color name="primary_dark">@color/md_theme_primaryContainer</color>
+    <color name="border_light">@color/md_theme_outlineVariant</color>
+    <color name="success">#4CAF50</color> <!-- Example success color -->
+    <color name="success_variant">#388E3C</color> <!-- Example success variant color -->
+    <color name="card_background">@color/md_theme_surface</color>
+    <color name="text_tertiary">@color/md_theme_onSurfaceVariant</color>
+    <color name="gradient_end">@color/md_theme_primary</color>
+    <color name="gradient_center">@color/md_theme_primaryContainer</color>
+    <color name="gradient_start">@color/md_theme_secondary</color>
+    <color name="accent">@color/md_theme_secondary</color>
+    <color name="transparent">#00000000</color>
+    <color name="overlay_light">#1A000000</color>
+    <color name="glass_background">@color/md_theme_surface</color>
+    <color name="glass_border">@color/md_theme_outline</color>
+
+    <!-- Newly identified missing colors -->
+    <color name="surface_dim">@color/md_theme_surfaceVariant</color> <!-- Mapping to a Material Design 3 color -->
+    <color name="neon_yellow">#FFFF00</color> <!-- Placeholder, adjust as needed -->
+    <color name="neon_red">#FF0000</color> <!-- Placeholder, adjust as needed -->
+    <color name="neon_green">#00FF00</color> <!-- Placeholder, adjust as needed -->
+    <color name="status_connecting">@color/neon_yellow</color>
+    <color name="status_offline">@color/neon_red</color>
+    <color name="status_online">@color/neon_green</color>
+    <color name="status_recording">@color/neon_red</color> <!-- Assuming recording status is red -->
+    <color name="surface_dark">@color/md_theme_inverseSurface</color> <!-- Mapping to a Material Design 3 color -->
+    <color name="neon_blue">#0000FF</color> <!-- Placeholder, adjust as needed -->
+    <color name="text_title_high_contrast">@color/md_theme_onSurface</color> <!-- Mapping to a Material Design 3 color -->
+    <color name="text_secondary">@color/md_theme_onSurfaceVariant</color> <!-- Mapping to a Material Design 3 color -->
+    <color name="appColor">@color/md_theme_primary</color>
+    <color name="background_dark">@color/md_theme_background</color>
+    <color name="card_dark">@color/md_theme_surface</color>
+    <color name="text_primary">@color/md_theme_onSurface</color>
+    <color name="text_on_primary">@color/md_theme_onPrimary</color>
+    <color name="text_on_secondary">@color/md_theme_onSecondary</color>
+    <color name="text_on_surface">@color/md_theme_onSurface</color>
+    <color name="text_on_background">@color/md_theme_onBackground</color>
+    <color name="neon_purple">#A020F0</color>
+
+    <!-- Prism Live Inspired Colors -->
+    <color name="prism_dark_background">#0A0A0A</color>
+    <color name="prism_dark_surface">#1A1A1A</color>
+    <color name="prism_dark_surface_variant">#2A2A2A</color>
+    
+    <!-- Neon Accent Colors -->
+    <color name="prism_neon_accent">#00FFFF</color>
+    <color name="prism_neon_pink">#FF00FF</color>
+    <color name="prism_neon_red">#FF0000</color>
+    <color name="prism_neon_yellow">#FFFF00</color>
+    <color name="prism_neon_green">#00FF00</color>
+    <color name="prism_neon_blue">#0080FF</color>
+    <color name="prism_neon_purple">#8000FF</color>
+    
+    <!-- Text Colors -->
+    <color name="prism_text_primary">#FFFFFF</color>
+    <color name="prism_text_secondary">#B3FFFFFF</color>
+    <color name="prism_text_tertiary">#80FFFFFF</color>
+    
+    <!-- Gradient Colors -->
+    <color name="prism_gradient_start">#FF0080</color>
+    <color name="prism_gradient_center">#8000FF</color>
+    <color name="prism_gradient_end">#0080FF</color>
+    
+    <!-- Status Colors -->
+    <color name="prism_status_live">#FF0000</color>
+    <color name="prism_status_connecting">#FFFF00</color>
+    <color name="prism_status_offline">#666666</color>
+    <color name="prism_status_online">#00FF00</color>
+    
+    <!-- Overlay Colors -->
+    <color name="prism_overlay_dark">#80000000</color>
+    <color name="prism_overlay_medium">#40000000</color>
+    <color name="prism_overlay_light">#20000000</color>
+    
+    <!-- Button Colors -->
+    <color name="prism_button_primary">#00FFFF</color>
+    <color name="prism_button_secondary">#FF00FF</color>
+    <color name="prism_button_success">#00FF00</color>
+    <color name="prism_button_danger">#FF0000</color>
+    <color name="prism_button_warning">#FFFF00</color>
+
+</resources>

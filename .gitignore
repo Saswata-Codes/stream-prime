@@ -1,0 +1,58 @@
+# Gradle and Android build output
+.gradle/
+.kotlin/
+build/
+**/build/
+captures/
+outputs/
+*.apk
+*.ap_
+*.aab
+*.aar
+*.dex
+*.class
+
+# Local Android configuration
+local.properties
+
+# Signing keys and secrets
+*.jks
+*.keystore
+*.p12
+*.pem
+*.key
+keystore.properties
+signing.properties
+secrets.properties
+.env
+.env.*
+!.env.example
+
+# IDE and editor files
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# Local AI/editor assistant config
+.claude/
+.codex/
+.agents/
+.cursor/
+.windsurf/
+
+# OS and temporary files
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*.bak
+*.backup
+*.orig
+*.swp
+*~
+
+# Generated documentation
+docs/
+dokka/

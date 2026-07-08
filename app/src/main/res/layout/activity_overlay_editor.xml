@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  android:layout_width="match_parent"
+  android:layout_height="match_parent"
+  android:orientation="vertical"
+  android:padding="16dp"
+  android:background="@color/prism_dark_background">
+
+  <FrameLayout
+    android:layout_width="match_parent"
+    android:layout_height="0dp"
+    android:layout_weight="1"
+    android:background="@color/prism_dark_surface">
+
+    <com.stream.prime.overlay.OverlayPreviewView
+      android:id="@+id/preview_overlay"
+      android:layout_width="match_parent"
+      android:layout_height="match_parent"/>
+
+    <ImageView
+      android:id="@+id/overlay_image"
+      android:layout_width="match_parent"
+      android:layout_height="match_parent"
+      android:scaleType="matrix"
+      android:adjustViewBounds="true"
+      android:contentDescription="Overlay Preview"/>
+
+  </FrameLayout>
+
+  
+
+  <LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingTop="12dp">
+
+    <TextView
+      android:layout_width="wrap_content"
+      android:layout_height="wrap_content"
+      android:text="Alpha"
+      android:textColor="@color/prism_text_primary"
+      android:layout_marginEnd="8dp"/>
+
+    <SeekBar
+      android:id="@+id/alpha_seek"
+      android:layout_width="0dp"
+      android:layout_height="wrap_content"
+      android:layout_weight="1"
+      android:max="100"
+      android:progress="100"/>
+
+  </LinearLayout>
+
+  <LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center"
+    android:paddingTop="12dp">
+
+    <TextView
+      android:id="@+id/btn_select_image"
+      android:layout_width="0dp"
+      android:layout_height="48dp"
+      android:layout_weight="1"
+      android:gravity="center"
+      android:text="Select Image"
+      android:textColor="@color/prism_text_primary"
+      android:background="@drawable/prism_circular_button"/>
+
+    <View
+      android:layout_width="12dp"
+      android:layout_height="1dp"/>
+
+    <TextView
+      android:id="@+id/btn_edit_name"
+      android:layout_width="0dp"
+      android:layout_height="48dp"
+      android:layout_weight="1"
+      android:gravity="center"
+      android:text="Edit Name"
+      android:textColor="@color/prism_text_primary"
+      android:background="@drawable/prism_circular_button"/>
+
+    <View
+      android:layout_width="12dp"
+      android:layout_height="1dp"/>
+
+    <TextView
+      android:id="@+id/btn_delete"
+      android:layout_width="0dp"
+      android:layout_height="48dp"
+      android:layout_weight="1"
+      android:gravity="center"
+      android:text="Remove"
+      android:textColor="@color/prism_text_primary"
+      android:background="@drawable/prism_circular_button"/>
+
+    <View
+      android:layout_width="12dp"
+      android:layout_height="1dp"/>
+
+    <TextView
+      android:id="@+id/btn_save"
+      android:layout_width="0dp"
+      android:layout_height="48dp"
+      android:layout_weight="1"
+      android:gravity="center"
+      android:text="Save"
+      android:textColor="@color/prism_text_primary"
+      android:background="@drawable/prism_circular_button"/>
+
+  </LinearLayout>
+
+</LinearLayout>
+
+

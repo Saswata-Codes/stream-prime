@@ -1,0 +1,19 @@
+<resources>
+  <style name="buttonStyle"
+      parent="android:style/Widget.Button">
+    <item name="android:background">@xml/button_style</item>
+    <item name="android:padding">8dp</item>
+    <item name="android:textColor">@color/white</item>
+    <item name="android:textStyle">bold</item>
+  </style>
+
+  <style name="TextAppearance.App.HeadlineSmall" parent="TextAppearance.Material3.HeadlineSmall" />
+  <style name="TextAppearance.App.TitleMedium" parent="TextAppearance.Material3.TitleMedium" />
+  <style name="Widget.App.TextInputLayout" parent="Widget.Material3.TextInputLayout.FilledBox" />
+  <style name="TextAppearance.App.BodyMedium" parent="TextAppearance.Material3.BodyMedium" />
+
+  <!-- Custom button styles -->
+  <style name="Widget.App.Button" parent="Widget.Material3.Button" />
+  <style name="Widget.App.Button.Secondary" parent="Widget.Material3.Button.OutlinedButton" />
+</resources>
+

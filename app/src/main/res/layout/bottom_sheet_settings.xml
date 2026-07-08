@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/glassmorphism_card"
+    android:padding="24dp">
+
+    <!-- Handle -->
+    <View
+        android:layout_width="40dp"
+        android:layout_height="4dp"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginBottom="16dp"
+        android:background="@drawable/bottom_sheet_handle" />
+
+    <!-- Title -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/quality_settings"
+        android:textAppearance="@style/TextAppearance.App.HeadlineSmall"
+        android:textColor="@color/text_primary"
+        android:layout_marginBottom="24dp"
+        android:gravity="center" />
+
+    <!-- Resolution Selection -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/resolution"
+        android:textAppearance="@style/TextAppearance.App.TitleMedium"
+        android:textColor="@color/text_primary"
+        android:layout_marginBottom="12dp" />
+
+    <com.google.android.material.textfield.TextInputLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="20dp"
+        style="@style/Widget.App.TextInputLayout">
+
+        <AutoCompleteTextView
+            android:id="@+id/resolution_spinner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="@string/resolution"
+            android:inputType="none"
+            android:focusable="false" />
+
+    </com.google.android.material.textfield.TextInputLayout>
+
+    <!-- FPS Slider -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/fps"
+        android:textAppearance="@style/TextAppearance.App.TitleMedium"
+        android:textColor="@color/text_primary"
+        android:layout_marginBottom="12dp" />
+
+    <com.google.android.material.slider.Slider
+        android:id="@+id/fps_slider"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="20dp"
+        android:valueFrom="24"
+        android:valueTo="60"
+        android:stepSize="6"
+        android:value="30"
+        app:labelBehavior="floating"
+        app:thumbColor="@color/primary"
+        app:trackColorActive="@color/primary"
+        app:trackColorInactive="@color/text_tertiary" />
+
+    <TextView
+        android:id="@+id/fps_value"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="30 FPS"
+        android:textAppearance="@style/TextAppearance.App.BodyMedium"
+        android:textColor="@color/text_secondary"
+        android:gravity="center"
+        android:layout_marginBottom="20dp" />
+
+    <!-- Bitrate Slider -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="@string/bitrate"
+        android:textAppearance="@style/TextAppearance.App.TitleMedium"
+        android:textColor="@color/text_primary"
+        android:layout_marginBottom="12dp" />
+
+    <com.google.android.material.slider.Slider
+        android:id="@+id/bitrate_slider"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="20dp"
+        android:valueFrom="1000"
+        android:valueTo="8000"
+        android:stepSize="500"
+        android:value="2500"
+        app:labelBehavior="floating"
+        app:thumbColor="@color/primary"
+        app:trackColorActive="@color/primary"
+        app:trackColorInactive="@color/text_tertiary" />
+
+    <TextView
+        android:id="@+id/bitrate_value"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="2.5 Mbps"
+        android:textAppearance="@style/TextAppearance.App.BodyMedium"
+        android:textColor="@color/text_secondary"
+        android:gravity="center"
+        android:layout_marginBottom="24dp" />
+
+    <!-- Action Buttons -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="end">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_cancel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/cancel"
+            android:layout_marginEnd="12dp"
+            style="@style/Widget.App.Button.Secondary" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btn_apply"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/apply"
+            style="@style/Widget.App.Button" />
+
+    </LinearLayout>
+
+</LinearLayout> 

@@ -1,0 +1,330 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/prism_dark_background">
+
+    <!-- Main Video Preview Area -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <!-- Large Video Preview Window -->
+        <androidx.cardview.widget.CardView
+            android:id="@+id/video_preview_container"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:layout_margin="16dp"
+            app:cardCornerRadius="24dp"
+            app:cardElevation="16dp"
+            app:cardBackgroundColor="@color/prism_dark_surface"
+            app:strokeWidth="2dp"
+            app:strokeColor="@color/prism_neon_accent"
+            app:layout_constraintTop_toBottomOf="@id/top_controls"
+            app:layout_constraintBottom_toTopOf="@id/volume_controls"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent">
+
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="match_parent">
+
+                <!-- Video Surface -->
+                <android.view.SurfaceView
+                    android:id="@+id/surface_view"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:background="@drawable/prism_video_placeholder" />
+
+                <!-- Streaming Overlay Information -->
+                <LinearLayout
+                    android:id="@+id/streaming_overlay"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="top|start"
+                    android:layout_margin="20dp"
+                    android:orientation="vertical"
+                    android:background="@drawable/prism_overlay_background"
+                    android:padding="12dp">
+
+                    <!-- Live Status -->
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_marginBottom="8dp">
+
+                        <View
+                            android:layout_width="8dp"
+                            android:layout_height="8dp"
+                            android:layout_marginEnd="8dp"
+                            android:background="@drawable/prism_live_indicator" />
+
+                        <TextView
+                            android:id="@+id/txt_live_status"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="LIVE"
+                            android:textColor="@color/prism_neon_red"
+                            android:textSize="12sp"
+                            android:textStyle="bold" />
+
+                    </LinearLayout>
+
+                    <!-- Stream Duration -->
+                    <TextView
+                        android:id="@+id/txt_stream_duration"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="00:00"
+                        android:textColor="@color/prism_text_secondary"
+                        android:textSize="10sp" />
+
+                </LinearLayout>
+
+                <!-- Bitrate Display -->
+                <TextView
+                    android:id="@+id/txt_bitrate"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="top|end"
+                    android:layout_margin="20dp"
+                    android:text="0.0 Mbps"
+                    android:textColor="@color/prism_text_primary"
+                    android:textSize="12sp"
+                    android:background="@drawable/prism_overlay_background"
+                    android:padding="8dp" />
+
+                <!-- Open Overlay Editor Button -->
+                <TextView
+                    android:id="@+id/btn_overlay"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:layout_gravity="bottom|end"
+                    android:layout_margin="16dp"
+                    android:text="🖼"
+                    android:gravity="center"
+                    android:textSize="18sp"
+                    android:textColor="@color/prism_text_primary"
+                    android:background="@drawable/prism_circular_button"
+                    android:contentDescription="Overlay" />
+
+            </FrameLayout>
+
+        </androidx.cardview.widget.CardView>
+
+        <!-- Top Control Panel -->
+        <LinearLayout
+            android:id="@+id/top_controls"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_margin="16dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            app:layout_constraintTop_toTopOf="parent">
+
+            <!-- Back Button -->
+            <TextView
+                android:id="@+id/btn_back"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:text="←"
+                android:textSize="24sp"
+                android:textColor="@color/prism_neon_accent"
+                android:gravity="center"
+                android:background="@drawable/prism_circular_button"
+                android:clickable="true"
+                android:focusable="true"
+                android:contentDescription="Back" />
+
+            <!-- Spacer -->
+            <View
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
+
+            <!-- Settings Button -->
+            <TextView
+                android:id="@+id/btn_settings"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:text="⚙"
+                android:textSize="20sp"
+                android:textColor="@color/prism_neon_accent"
+                android:gravity="center"
+                android:background="@drawable/prism_circular_button"
+                android:clickable="true"
+                android:focusable="true"
+                android:contentDescription="Settings" />
+
+        </LinearLayout>
+
+        <!-- Volume Controls (Above Bottom Controls) -->
+        <LinearLayout
+            android:id="@+id/volume_controls"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_margin="16dp"
+            android:orientation="vertical"
+            android:background="@drawable/prism_overlay_background"
+            android:padding="16dp"
+            app:layout_constraintBottom_toTopOf="@id/bottom_controls">
+
+            <!-- Stream Audio Level Controls -->
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Stream Audio Levels"
+                android:textSize="12sp"
+                android:textColor="@color/prism_text_secondary"
+                android:gravity="center"
+                android:layout_marginBottom="8dp" />
+
+            <!-- Microphone Volume Control -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="12dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="🎤 Mic Level"
+                    android:textSize="14sp"
+                    android:textColor="@color/prism_text_primary"
+                    android:layout_marginEnd="12dp" />
+
+                <SeekBar
+                    android:id="@+id/seekbar_mic_volume"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:max="100"
+                    android:progress="100"
+                    android:progressTint="@color/prism_neon_green"
+                    android:thumbTint="@color/prism_neon_green"
+                    android:backgroundTint="@color/prism_dark_surface" />
+
+                <TextView
+                    android:id="@+id/txt_mic_volume"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="100%"
+                    android:textSize="12sp"
+                    android:textColor="@color/prism_neon_green"
+                    android:layout_marginStart="8dp" />
+
+            </LinearLayout>
+
+            <!-- Device Audio Level Control -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="📱 Device Audio"
+                    android:textSize="14sp"
+                    android:textColor="@color/prism_text_primary"
+                    android:layout_marginEnd="12dp" />
+
+                <SeekBar
+                    android:id="@+id/seekbar_device_volume"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:max="100"
+                    android:progress="100"
+                    android:progressTint="@color/prism_neon_accent"
+                    android:thumbTint="@color/prism_neon_accent"
+                    android:backgroundTint="@color/prism_dark_surface" />
+
+                <TextView
+                    android:id="@+id/txt_device_volume"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="100%"
+                    android:textSize="12sp"
+                    android:textColor="@color/prism_neon_accent"
+                    android:layout_marginStart="8dp" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+        <!-- Bottom Control Panel -->
+        <LinearLayout
+            android:id="@+id/bottom_controls"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_margin="16dp"
+            android:orientation="vertical"
+            app:layout_constraintBottom_toBottomOf="parent">
+
+            <!-- Main Action Buttons -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center"
+                android:layout_marginBottom="24dp">
+
+                <!-- Microphone Button -->
+                <TextView
+                    android:id="@+id/btn_mic"
+                    android:layout_width="72dp"
+                    android:layout_height="72dp"
+                    android:layout_marginEnd="24dp"
+                    android:text="🎤"
+                    android:textSize="32sp"
+                    android:textColor="@color/prism_neon_accent"
+                    android:gravity="center"
+                    android:background="@drawable/prism_circular_button"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:contentDescription="Microphone" />
+
+                <!-- Main Stream Button -->
+                <TextView
+                    android:id="@+id/btn_stream"
+                    android:layout_width="96dp"
+                    android:layout_height="96dp"
+                    android:layout_marginEnd="24dp"
+                    android:text="▶"
+                    android:textSize="40sp"
+                    android:textColor="@color/prism_text_primary"
+                    android:gravity="center"
+                    android:background="@drawable/prism_stream_button"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:contentDescription="Stream" />
+
+                <!-- Record Button -->
+                <TextView
+                    android:id="@+id/btn_record"
+                    android:layout_width="72dp"
+                    android:layout_height="72dp"
+                    android:text="●"
+                    android:textSize="32sp"
+                    android:textColor="@color/prism_neon_accent"
+                    android:gravity="center"
+                    android:background="@drawable/prism_circular_button"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:contentDescription="Record" />
+
+            </LinearLayout>
+
+        </LinearLayout>
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+</androidx.coordinatorlayout.widget.CoordinatorLayout> 

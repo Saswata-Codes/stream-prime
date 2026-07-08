@@ -1,0 +1,13 @@
+Stream Prime
+Copyright 2026 Saswata Chatterjee
+
+This project includes and adapts source code from RootEncoder:
+
+  RootEncoder
+  Copyright (C) 2024 pedroSG94 and contributors
+  https://github.com/pedroSG94/RootEncoder
+
+RootEncoder is licensed under the Apache License, Version 2.0.
+Existing RootEncoder source files retain their original copyright notices.
+
+Special thanks to the RootEncoder open-source project and its contributors for providing powerful streaming and encoding functionality that helped make this project possible.

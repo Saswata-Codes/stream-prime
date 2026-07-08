@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@drawable/prism_circular_button"
+    android:padding="8dp">
+
+    <!-- Stream Start/Stop Button -->
+    <TextView
+        android:id="@+id/btn_floating_stream"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:text="▶"
+        android:textSize="20sp"
+        android:textColor="@color/prism_text_primary"
+        android:gravity="center"
+        android:background="@drawable/prism_circular_button"
+        android:clickable="true"
+        android:focusable="true"
+        android:layout_marginBottom="4dp"
+        android:contentDescription="Stream" />
+
+    <!-- Settings Button -->
+    <TextView
+        android:id="@+id/btn_floating_settings"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:text="⚙"
+        android:textSize="16sp"
+        android:textColor="@color/prism_neon_accent"
+        android:gravity="center"
+        android:background="@drawable/prism_circular_button"
+        android:clickable="true"
+        android:focusable="true"
+        android:layout_marginBottom="4dp"
+        android:contentDescription="Settings" />
+
+    <!-- Close Button -->
+    <TextView
+        android:id="@+id/btn_floating_close"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:text="✕"
+        android:textSize="16sp"
+        android:textColor="@color/prism_neon_red"
+        android:gravity="center"
+        android:background="@drawable/prism_circular_button"
+        android:clickable="true"
+        android:focusable="true"
+        android:contentDescription="Close" />
+
+</LinearLayout> 

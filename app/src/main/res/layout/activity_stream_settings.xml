@@ -1,0 +1,603 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/prism_dark_background">
+
+    <!-- Main Content -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <!-- Header -->
+        <LinearLayout
+            android:id="@+id/header"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:padding="24dp"
+            android:gravity="center_vertical"
+            app:layout_constraintTop_toTopOf="parent">
+
+            <TextView
+                android:id="@+id/btn_back"
+                android:layout_width="56dp"
+                android:layout_height="56dp"
+                android:text="←"
+                android:textSize="24sp"
+                android:textColor="@color/prism_neon_accent"
+                android:gravity="center"
+                android:background="@drawable/prism_circular_button"
+                android:clickable="true"
+                android:focusable="true"
+                android:contentDescription="Back" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Stream Settings"
+                android:textSize="24sp"
+                android:textStyle="bold"
+                android:textColor="@color/prism_text_primary"
+                android:gravity="center" />
+
+            <ImageView
+                android:id="@+id/btn_save"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:src="@drawable/ic_check"
+                android:background="@drawable/prism_circular_button"
+                android:padding="12dp"
+                android:tint="@color/prism_neon_green" />
+
+        </LinearLayout>
+
+        <!-- Settings Content -->
+        <androidx.core.widget.NestedScrollView
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:padding="24dp"
+            app:layout_constraintTop_toBottomOf="@id/header"
+            app:layout_constraintBottom_toTopOf="@id/bottom_actions">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical">
+
+                <!-- Streaming Mode Section -->
+                <com.google.android.material.card.MaterialCardView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="24dp"
+                    app:cardCornerRadius="16dp"
+                    app:cardElevation="8dp"
+                    app:cardBackgroundColor="@color/prism_dark_surface"
+                    app:strokeWidth="1dp"
+                    app:strokeColor="@color/prism_neon_accent">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="20dp">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical"
+                            android:layout_marginBottom="16dp">
+
+                            <ImageView
+                                android:layout_width="24dp"
+                                android:layout_height="24dp"
+                                android:src="@drawable/ic_settings"
+                                android:tint="@color/prism_neon_accent"
+                                android:layout_marginEnd="12dp" />
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="Streaming Mode"
+                                android:textSize="18sp"
+                                android:textStyle="bold"
+                                android:textColor="@color/prism_text_primary" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Tap to change"
+                                android:textSize="12sp"
+                                android:textColor="@color/prism_text_secondary"
+                                android:background="@drawable/prism_overlay_background"
+                                android:padding="4dp"
+                                android:layout_marginStart="8dp" />
+
+                        </LinearLayout>
+
+                        <com.google.android.material.textfield.TextInputLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:hint="Select Mode"
+                            app:boxBackgroundColor="@color/prism_dark_surface_variant"
+                            app:boxStrokeColor="@color/prism_neon_accent"
+                            app:hintTextColor="@color/prism_neon_accent">
+
+                            <Spinner
+                                android:id="@+id/spinner_streaming_mode"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:background="@drawable/spinner_background"
+                                android:popupBackground="@color/prism_dark_surface"
+                                android:spinnerMode="dropdown"
+                                android:dropDownWidth="match_parent" />
+
+                        </com.google.android.material.textfield.TextInputLayout>
+
+                    </LinearLayout>
+
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- RTMP Configuration Section -->
+                <com.google.android.material.card.MaterialCardView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="24dp"
+                    app:cardCornerRadius="16dp"
+                    app:cardElevation="8dp"
+                    app:cardBackgroundColor="@color/prism_dark_surface"
+                    app:strokeWidth="1dp"
+                    app:strokeColor="@color/prism_neon_green">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="20dp">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical"
+                            android:layout_marginBottom="16dp">
+
+                            <ImageView
+                                android:layout_width="24dp"
+                                android:layout_height="24dp"
+                                android:src="@drawable/ic_stream_start"
+                                android:tint="@color/prism_neon_green"
+                                android:layout_marginEnd="12dp" />
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="RTMP Configuration"
+                                android:textSize="18sp"
+                                android:textStyle="bold"
+                                android:textColor="@color/prism_text_primary" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Connect"
+                                android:textSize="12sp"
+                                android:textColor="@color/prism_text_secondary"
+                                android:background="@drawable/prism_overlay_background"
+                                android:padding="4dp"
+                                android:layout_marginStart="8dp" />
+
+                        </LinearLayout>
+
+                        <!-- Streaming Service -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:layout_marginBottom="16dp">
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal"
+                                android:gravity="center_vertical"
+                                android:layout_marginBottom="8dp">
+
+                                <TextView
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:text="Streaming Service"
+                                    android:textSize="14sp"
+                                    android:textColor="@color/prism_text_secondary" />
+
+                                <ImageView
+                                    android:layout_width="16dp"
+                                    android:layout_height="16dp"
+                                    android:src="@drawable/ic_arrow_down"
+                                    android:tint="@color/prism_neon_green" />
+
+                            </LinearLayout>
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:hint="Select Service"
+                                app:boxBackgroundColor="@color/prism_dark_surface_variant"
+                                app:boxStrokeColor="@color/prism_neon_green"
+                                app:hintTextColor="@color/prism_neon_green">
+
+                                <Spinner
+                                    android:id="@+id/spinner_streaming_service"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:background="@drawable/spinner_background"
+                                    android:popupBackground="@color/prism_dark_surface"
+                                    android:spinnerMode="dropdown"
+                                    android:dropDownWidth="match_parent" />
+
+                            </com.google.android.material.textfield.TextInputLayout>
+
+                        </LinearLayout>
+
+                        <!-- Stream URL -->
+                        <LinearLayout
+                            android:id="@+id/til_stream_url"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:layout_marginBottom="16dp"
+                            android:visibility="gone">
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal"
+                                android:gravity="center_vertical"
+                                android:layout_marginBottom="8dp">
+
+                                <TextView
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:text="Stream URL"
+                                    android:textSize="14sp"
+                                    android:textColor="@color/prism_text_secondary" />
+
+                                <ImageView
+                                    android:layout_width="16dp"
+                                    android:layout_height="16dp"
+                                    android:src="@drawable/ic_edit"
+                                    android:tint="@color/prism_neon_green" />
+
+                            </LinearLayout>
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:hint="RTMP URL"
+                                app:boxBackgroundColor="@color/prism_dark_surface_variant"
+                                app:boxStrokeColor="@color/prism_neon_green"
+                                app:hintTextColor="@color/prism_neon_green">
+
+                                <com.google.android.material.textfield.TextInputEditText
+                                    android:id="@+id/et_stream_url"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:inputType="textUri"
+                                    android:textColor="@color/prism_text_primary" />
+
+                            </com.google.android.material.textfield.TextInputLayout>
+
+                        </LinearLayout>
+
+                        <!-- Stream Key -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical">
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal"
+                                android:gravity="center_vertical"
+                                android:layout_marginBottom="8dp">
+
+                                <TextView
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:text="Stream Key"
+                                    android:textSize="14sp"
+                                    android:textColor="@color/prism_text_secondary" />
+
+                                <ImageView
+                                    android:layout_width="16dp"
+                                    android:layout_height="16dp"
+                                    android:src="@drawable/ic_edit"
+                                    android:tint="@color/prism_neon_green" />
+
+                            </LinearLayout>
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:hint="Enter Stream Key"
+                                app:boxBackgroundColor="@color/prism_dark_surface_variant"
+                                app:boxStrokeColor="@color/prism_neon_green"
+                                app:hintTextColor="@color/prism_neon_green"
+                                app:endIconMode="password_toggle"
+                                app:endIconTint="@color/prism_neon_green">
+
+                                <com.google.android.material.textfield.TextInputEditText
+                                    android:id="@+id/et_stream_key"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:inputType="textPassword"
+                                    android:textColor="@color/prism_text_primary" />
+
+                            </com.google.android.material.textfield.TextInputLayout>
+
+                        </LinearLayout>
+
+                    </LinearLayout>
+
+                </com.google.android.material.card.MaterialCardView>
+
+                <!-- Quality Settings Section -->
+                <com.google.android.material.card.MaterialCardView
+                    android:id="@+id/card_quality_settings"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="24dp"
+                    app:cardCornerRadius="16dp"
+                    app:cardElevation="8dp"
+                    app:cardBackgroundColor="@color/prism_dark_surface"
+                    app:strokeWidth="1dp"
+                    app:strokeColor="@color/prism_neon_purple">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="vertical"
+                        android:padding="20dp">
+
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="horizontal"
+                            android:gravity="center_vertical"
+                            android:layout_marginBottom="16dp">
+
+                            <ImageView
+                                android:layout_width="24dp"
+                                android:layout_height="24dp"
+                                android:src="@drawable/ic_stream_start"
+                                android:tint="@color/prism_neon_purple"
+                                android:layout_marginEnd="12dp" />
+
+                            <TextView
+                                android:layout_width="0dp"
+                                android:layout_height="wrap_content"
+                                android:layout_weight="1"
+                                android:text="Quality Settings"
+                                android:textSize="18sp"
+                                android:textStyle="bold"
+                                android:textColor="@color/prism_text_primary" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Customize"
+                                android:textSize="12sp"
+                                android:textColor="@color/prism_text_secondary"
+                                android:background="@drawable/prism_overlay_background"
+                                android:padding="4dp"
+                                android:layout_marginStart="8dp" />
+
+                        </LinearLayout>
+
+                        <!-- Resolution -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:layout_marginBottom="16dp">
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal"
+                                android:gravity="center_vertical"
+                                android:layout_marginBottom="8dp">
+
+                                <TextView
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:text="Resolution"
+                                    android:textSize="14sp"
+                                    android:textColor="@color/prism_text_secondary" />
+
+                                <ImageView
+                                    android:layout_width="16dp"
+                                    android:layout_height="16dp"
+                                    android:src="@drawable/ic_arrow_down"
+                                    android:tint="@color/prism_neon_purple" />
+
+                            </LinearLayout>
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:hint="Select Resolution"
+                                app:boxBackgroundColor="@color/prism_dark_surface_variant"
+                                app:boxStrokeColor="@color/prism_neon_purple"
+                                app:hintTextColor="@color/prism_neon_purple">
+
+                                <Spinner
+                                    android:id="@+id/spinner_resolution"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:background="@drawable/spinner_background"
+                                    android:popupBackground="@color/prism_dark_surface"
+                                    android:spinnerMode="dropdown"
+                                    android:dropDownWidth="match_parent" />
+
+                            </com.google.android.material.textfield.TextInputLayout>
+
+                        </LinearLayout>
+
+                        <!-- FPS -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical"
+                            android:layout_marginBottom="16dp">
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal"
+                                android:gravity="center_vertical"
+                                android:layout_marginBottom="8dp">
+
+                                <TextView
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:text="Frame Rate (FPS)"
+                                    android:textSize="14sp"
+                                    android:textColor="@color/prism_text_secondary" />
+
+                                <ImageView
+                                    android:layout_width="16dp"
+                                    android:layout_height="16dp"
+                                    android:src="@drawable/ic_arrow_down"
+                                    android:tint="@color/prism_neon_purple" />
+
+                            </LinearLayout>
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:hint="Select FPS"
+                                app:boxBackgroundColor="@color/prism_dark_surface_variant"
+                                app:boxStrokeColor="@color/prism_neon_purple"
+                                app:hintTextColor="@color/prism_neon_purple">
+
+                                <Spinner
+                                    android:id="@+id/spinner_fps"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:background="@drawable/spinner_background"
+                                    android:popupBackground="@color/prism_dark_surface"
+                                    android:spinnerMode="dropdown"
+                                    android:dropDownWidth="match_parent" />
+
+                            </com.google.android.material.textfield.TextInputLayout>
+
+                        </LinearLayout>
+
+                        <!-- Bitrate -->
+                        <LinearLayout
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:orientation="vertical">
+
+                            <LinearLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:orientation="horizontal"
+                                android:gravity="center_vertical"
+                                android:layout_marginBottom="8dp">
+
+                                <TextView
+                                    android:layout_width="0dp"
+                                    android:layout_height="wrap_content"
+                                    android:layout_weight="1"
+                                    android:text="Bitrate (Mbps)"
+                                    android:textSize="14sp"
+                                    android:textColor="@color/prism_text_secondary" />
+
+                                <ImageView
+                                    android:layout_width="16dp"
+                                    android:layout_height="16dp"
+                                    android:src="@drawable/ic_edit"
+                                    android:tint="@color/prism_neon_purple" />
+
+                            </LinearLayout>
+
+                            <com.google.android.material.textfield.TextInputLayout
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:hint="Bitrate"
+                                app:boxBackgroundColor="@color/prism_dark_surface_variant"
+                                app:boxStrokeColor="@color/prism_neon_purple"
+                                app:hintTextColor="@color/prism_neon_purple">
+
+                                <com.google.android.material.textfield.TextInputEditText
+                                    android:id="@+id/et_bitrate"
+                                    android:layout_width="match_parent"
+                                    android:layout_height="wrap_content"
+                                    android:inputType="numberDecimal"
+                                    android:textColor="@color/prism_text_primary" />
+
+                            </com.google.android.material.textfield.TextInputLayout>
+
+                        </LinearLayout>
+
+                    </LinearLayout>
+
+                </com.google.android.material.card.MaterialCardView>
+
+            </LinearLayout>
+
+        </androidx.core.widget.NestedScrollView>
+
+        <!-- Bottom Actions -->
+        <LinearLayout
+            android:id="@+id/bottom_actions"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:padding="24dp"
+            android:gravity="center"
+            app:layout_constraintBottom_toBottomOf="parent">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btn_reset"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginEnd="8dp"
+                android:text="Reset"
+                android:textColor="@color/prism_text_primary"
+                app:backgroundTint="@color/prism_dark_surface"
+                app:strokeColor="@color/prism_neon_red"
+                app:strokeWidth="1dp"
+                app:cornerRadius="12dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btn_save_settings"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp"
+                android:text="Save"
+                android:textColor="@color/prism_text_primary"
+                app:backgroundTint="@color/prism_neon_green"
+                app:cornerRadius="12dp" />
+
+        </LinearLayout>
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+</androidx.coordinatorlayout.widget.CoordinatorLayout> 

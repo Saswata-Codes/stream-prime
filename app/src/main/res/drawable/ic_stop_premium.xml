@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    
+    <!-- Stop Square -->
+    <path
+        android:fillColor="@color/white"
+        android:pathData="M6,6h12v12h-12z" />
+    
+    <!-- Inner Square -->
+    <path
+        android:fillColor="@color/md_theme_error"
+        android:pathData="M8,8h8v8h-8z" />
+    
+    <!-- Glow Effect -->
+    <path
+        android:fillColor="@color/white"
+        android:pathData="M6,6h12v12h-12z"
+        android:alpha="0.3" />
+    
+    <!-- Corner Indicators -->
+    <path
+        android:fillColor="@color/white"
+        android:pathData="M6,6m-1,0a1,1 0,1 1,2 0a1,1 0,1 1,-2 0"
+        android:alpha="0.6" />
+    
+    <path
+        android:fillColor="@color/white"
+        android:pathData="M18,6m-1,0a1,1 0,1 1,2 0a1,1 0,1 1,-2 0"
+        android:alpha="0.6" />
+    
+    <path
+        android:fillColor="@color/white"
+        android:pathData="M6,18m-1,0a1,1 0,1 1,2 0a1,1 0,1 1,-2 0"
+        android:alpha="0.6" />
+    
+    <path
+        android:fillColor="@color/white"
+        android:pathData="M18,18m-1,0a1,1 0,1 1,2 0a1,1 0,1 1,-2 0"
+        android:alpha="0.6" />
+</vector> 

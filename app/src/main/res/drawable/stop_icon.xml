@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    
+    <!-- Stop Square -->
+    <path
+        android:fillColor="@color/white"
+        android:pathData="M6,6L18,6L18,18L6,18L6,6Z" />
+    
+    <!-- Stop Symbol -->
+    <path
+        android:fillColor="@color/md_theme_error"
+        android:pathData="M8,8L16,8L16,16L8,16L8,8Z" />
+</vector>

@@ -1,0 +1,213 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.coordinatorlayout.widget.CoordinatorLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/prism_dark_background">
+
+    <!-- Main Content -->
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent">
+
+        <!-- Top Controls -->
+        <LinearLayout
+            android:id="@+id/top_controls"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:padding="16dp"
+            android:gravity="center_vertical"
+            app:layout_constraintTop_toTopOf="parent">
+
+            <TextView
+                android:id="@+id/btn_back"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:text="←"
+                android:textSize="24sp"
+                android:textColor="@color/prism_text_primary"
+                android:gravity="center"
+                android:background="@drawable/prism_circular_button"
+                android:clickable="true"
+                android:focusable="true" />
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="File Streaming"
+                android:textSize="20sp"
+                android:textStyle="bold"
+                android:textColor="@color/prism_text_primary"
+                android:gravity="center" />
+
+            <TextView
+                android:id="@+id/btn_settings"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:text="⚙"
+                android:textSize="20sp"
+                android:textColor="@color/prism_text_primary"
+                android:gravity="center"
+                android:background="@drawable/prism_circular_button"
+                android:clickable="true"
+                android:focusable="true" />
+
+        </LinearLayout>
+
+        <!-- Main Content Area -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:orientation="vertical"
+            android:padding="24dp"
+            android:gravity="center"
+            app:layout_constraintTop_toBottomOf="@id/top_controls"
+            app:layout_constraintBottom_toTopOf="@id/bottom_controls">
+
+            <!-- File Selection Card -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="24dp"
+                app:cardCornerRadius="20dp"
+                app:cardElevation="12dp"
+                app:cardBackgroundColor="@color/prism_dark_surface"
+                app:strokeWidth="2dp"
+                app:strokeColor="@color/prism_neon_green">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:padding="24dp"
+                    android:gravity="center">
+
+                    <TextView
+                        android:layout_width="80dp"
+                        android:layout_height="80dp"
+                        android:text="🎬"
+                        android:textSize="40sp"
+                        android:textColor="@color/prism_neon_green"
+                        android:gravity="center"
+                        android:background="@drawable/prism_circular_button"
+                        android:layout_marginBottom="16dp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Select Video File"
+                        android:textSize="18sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/prism_text_primary"
+                        android:layout_marginBottom="8dp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Choose a video file to stream"
+                        android:textSize="14sp"
+                        android:textColor="@color/prism_text_secondary"
+                        android:layout_marginBottom="16dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btn_select_file"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Browse Files"
+                        android:textColor="@color/prism_text_primary"
+                        app:backgroundTint="@color/prism_neon_green"
+                        app:cornerRadius="12dp"
+                        android:padding="12dp" />
+
+                </LinearLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+            <!-- Selected File Info -->
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:cardCornerRadius="16dp"
+                app:cardElevation="8dp"
+                app:cardBackgroundColor="@color/prism_dark_surface"
+                app:strokeWidth="1dp"
+                app:strokeColor="@color/prism_neon_accent">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:padding="20dp"
+                    android:gravity="center_vertical">
+
+                    <TextView
+                        android:layout_width="48dp"
+                        android:layout_height="48dp"
+                        android:text="📁"
+                        android:textSize="24sp"
+                        android:textColor="@color/prism_neon_accent"
+                        android:gravity="center"
+                        android:layout_marginEnd="16dp" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Selected File"
+                            android:textSize="14sp"
+                            android:textColor="@color/prism_text_secondary" />
+
+                        <TextView
+                            android:id="@+id/tv_selected_file"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="No file selected"
+                            android:textSize="16sp"
+                            android:textStyle="bold"
+                            android:textColor="@color/prism_text_primary"
+                            android:layout_marginTop="4dp" />
+
+                    </LinearLayout>
+
+                </LinearLayout>
+
+            </com.google.android.material.card.MaterialCardView>
+
+        </LinearLayout>
+
+        <!-- Bottom Controls -->
+        <LinearLayout
+            android:id="@+id/bottom_controls"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="24dp"
+            android:gravity="center"
+            app:layout_constraintBottom_toBottomOf="parent">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btn_start_stream"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Start File Streaming"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:textColor="@color/prism_text_primary"
+                app:backgroundTint="@color/prism_neon_accent"
+                app:cornerRadius="16dp"
+                android:padding="16dp"
+                android:enabled="false" />
+
+        </LinearLayout>
+
+    </androidx.constraintlayout.widget.ConstraintLayout>
+
+</androidx.coordinatorlayout.widget.CoordinatorLayout> 

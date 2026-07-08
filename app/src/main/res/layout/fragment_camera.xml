@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/background">
+
+    <!-- Status Bar -->
+    <LinearLayout
+        android:id="@+id/status_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="16dp"
+        android:gravity="center_vertical"
+        android:background="@color/surface">
+
+        <ImageView
+            android:id="@+id/status_indicator"
+            android:layout_width="16dp"
+            android:layout_height="16dp"
+            android:src="@drawable/status_offline"
+            android:layout_marginEnd="8dp" />
+
+        <TextView
+            android:id="@+id/txt_status"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/status_disconnected"
+            android:textColor="@color/text_primary"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/txt_bitrate"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="0 Mbps"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp" />
+
+    </LinearLayout>
+
+    <!-- Surface View -->
+    <SurfaceView
+        android:id="@+id/surface_view"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <!-- Control Panel -->
+    <LinearLayout
+        android:id="@+id/control_panel"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:padding="16dp"
+        android:gravity="center"
+        android:background="@color/surface">
+
+        <com.google.android.material.floatingactionbutton.FloatingActionButton
+            android:id="@+id/b_settings"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:src="@drawable/ic_settings"
+            app:backgroundTint="@color/primary"
+            app:tint="@color/white"
+            app:fabSize="normal"
+            android:layout_marginEnd="16dp" />
+
+        <com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
+            android:id="@+id/button"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="LIVE"
+            android:src="@drawable/stream_icon"
+            app:backgroundTint="@color/neon_green"
+            app:tint="@color/white"
+            app:iconTint="@color/white"
+            app:fabSize="normal"
+            android:layout_marginEnd="24dp" />
+
+        <com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
+            android:id="@+id/b_record"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="REC"
+            android:src="@drawable/record_icon"
+            app:backgroundTint="@color/neon_red"
+            app:tint="@color/white"
+            app:iconTint="@color/white"
+            app:fabSize="normal" />
+
+    </LinearLayout>
+
+</LinearLayout>

@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Base gradient -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:startColor="@color/gradient_start"
+                android:centerColor="@color/gradient_center"
+                android:endColor="@color/gradient_end"
+                android:angle="135"
+                android:type="linear" />
+        </shape>
+    </item>
+    
+    <!-- Shimmer overlay -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:startColor="@color/overlay_light"
+                android:centerColor="@color/transparent"
+                android:endColor="@color/overlay_light"
+                android:angle="45"
+                android:type="linear" />
+        </shape>
+    </item>
+    
+    <!-- Additional depth layer -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:startColor="@color/transparent"
+                android:centerColor="@color/overlay_medium"
+                android:endColor="@color/transparent"
+                android:angle="225"
+                android:type="linear" />
+        </shape>
+    </item>
+</layer-list> 

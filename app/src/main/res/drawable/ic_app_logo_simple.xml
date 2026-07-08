@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- Eye Shape Outline -->
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#00FFFF"
+        android:strokeWidth="3"
+        android:pathData="M20,54 Q20,30 54,30 Q88,30 88,54 Q88,78 54,78 Q20,78 20,54 Z" />
+    
+    <!-- Eye Inner Shape -->
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#00FFFF"
+        android:strokeWidth="2"
+        android:pathData="M30,54 Q30,40 54,40 Q78,40 78,54 Q78,68 54,68 Q30,68 30,54 Z" />
+    
+    <!-- Waveform Lines Inside Eye -->
+    <path
+        android:strokeColor="#00FFFF"
+        android:strokeWidth="2"
+        android:pathData="M35,54 L35,45 M40,54 L40,50 M45,54 L45,42 M50,54 L50,48 M55,54 L55,44 M60,54 L60,49 M65,54 L65,43 M70,54 L70,47 M75,54 L75,46" />
+    
+    <!-- Additional Waveform Elements -->
+    <path
+        android:strokeColor="#00FFFF"
+        android:strokeWidth="1.5"
+        android:pathData="M38,54 L38,52 M42,54 L42,51 M46,54 L46,53 M50,54 L50,50 M54,54 L54,52 M58,54 L58,51 M62,54 L62,53 M66,54 L66,50 M70,54 L70,52" />
+    
+    <!-- Central Streaming Indicator -->
+    <path
+        android:fillColor="#00FFFF"
+        android:pathData="M54,54m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0"
+        android:alpha="0.8" />
+</vector> 
