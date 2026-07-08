@@ -29,7 +29,7 @@ Stream Prime is a developer-friendly mobile live-streaming app for Android creat
 
 | Home | Audio Levels | Stream Settings |
 | --- | --- | --- |
-| ![Home screen](media/screenshots/home.png) | ![Audio levels](media/screenshots/audio-levels.png) | ![Stream settings](media/screenshots/stream-settings.png) |
+| ![Home screen](media/screenshots/home.png) | ![Set Streaming](media/screenshots/streaming.png) | ![Stream settings](media/screenshots/stream-settings.png) |
 
 | Overlay Layers | File Streaming |
 | --- | --- |
@@ -39,7 +39,7 @@ Stream Prime is a developer-friendly mobile live-streaming app for Android creat
 
 Demo video placeholder:
 
-- YouTube demo: `https://youtu.be/your-demo-video`
+- YouTube demo: `Will Be Added Soon`
 - GIF preview: `media/demo/stream-prime-demo.gif`
 
 ## 🧰 Tech Stack
