@@ -55,6 +55,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        binding.mainVersionText.text = getString(R.string.version_format, BuildConfig.VERSION_NAME)
 
         // Register for activity result in onCreate
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
