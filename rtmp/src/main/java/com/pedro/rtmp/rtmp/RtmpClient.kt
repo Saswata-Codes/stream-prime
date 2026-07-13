@@ -195,6 +195,14 @@ class RtmpClient(private val connectChecker: ConnectChecker) {
     commandsManager.setVideoResolution(width, height)
   }
 
+  fun setVideoBitrate(bitrateBps: Int) {
+    commandsManager.setVideoBitrate(bitrateBps)
+  }
+
+  fun setAudioBitrate(bitrateBps: Int) {
+    commandsManager.setAudioBitrate(bitrateBps)
+  }
+
   fun setFps(fps: Int) {
     commandsManager.fps = fps
   }

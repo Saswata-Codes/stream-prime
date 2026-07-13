@@ -22,6 +22,8 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.Menu
@@ -96,6 +98,25 @@ class ScreenActivity : AppCompatActivity(), ConnectChecker {
   private var currentFps = 30
   private var action = Action.STREAM
   private var currentAudioSource: MenuItem? = null
+  private val serviceStateHandler = Handler(Looper.getMainLooper())
+  private var serviceStateSyncAttempt = 0
+  private val serviceStateSync = object : Runnable {
+    override fun run() {
+      if (isFinishing || isDestroyed) return
+      val service = ScreenService.INSTANCE
+      if (service == null) {
+        if (serviceStateSyncAttempt++ < SERVICE_STATE_SYNC_ATTEMPTS) {
+          serviceStateHandler.postDelayed(this, SERVICE_STATE_SYNC_DELAY_MS)
+        }
+        return
+      }
+
+      service.setCallback(this@ScreenActivity)
+      updateStreamButtonState()
+      updateRecordButtonState()
+      updateStatus(if (service.isStreaming()) "connected" else "disconnected")
+    }
+  }
 
   // Streaming services data
   private val streamingServices = mapOf(
@@ -123,6 +144,8 @@ class ScreenActivity : AppCompatActivity(), ConnectChecker {
     private const val KEY_BITRATE = "landscape_bitrate"
     private const val PERMISSION_REQUEST_CODE = 1
     private const val FOREGROUND_SERVICE_MEDIA_PROJECTION_PERMISSION = 2
+    private const val SERVICE_STATE_SYNC_ATTEMPTS = 20
+    private const val SERVICE_STATE_SYNC_DELAY_MS = 100L
   }
 
   private fun checkAudioPermission(): Boolean {
@@ -185,45 +208,24 @@ class ScreenActivity : AppCompatActivity(), ConnectChecker {
     if (screenService == null && checkAudioPermission()) {
       startService(Intent(this, ScreenService::class.java))
     }
-    if (screenService != null && screenService.isStreaming()) {
-      button.setIcon(ContextCompat.getDrawable(this, R.drawable.stop_icon))
-    } else {
-      button.setIcon(ContextCompat.getDrawable(this, R.drawable.stream_icon))
-    }
-    if (screenService != null && screenService.isRecording()) {
-      bRecord.setIcon(ContextCompat.getDrawable(this, R.drawable.stop_icon))
-    } else {
-      bRecord.setIcon(ContextCompat.getDrawable(this, R.drawable.record_icon))
-    }
+    scheduleServiceStateSync()
   }
 
   override fun onResume() {
     super.onResume()
     ScreenService.INSTANCE?.reloadQualitySettings()
-    
-    // Restore streaming status from SharedPreferences
-    val prefs = getSharedPreferences("StreamStatus", 0)
-    val isStreaming = prefs.getBoolean("landscape_streaming_status", false)
-    
-    // Check actual streaming state and update UI accordingly
-    val service = ScreenService.INSTANCE
-    if (service != null && service.isStreaming()) {
-      // Stream is actually running, update UI to reflect this
-      updateStatus("connected")
-      updateStreamButtonState()
-      // Request current bitrate from service
-      service.setCallback(this)
-      // Note: Bitrate will be updated by onNewBitrate callback when it comes
-    } else if (isStreaming && service?.isStreaming() != true) {
-      // If status says streaming but service isn't, fix status
-      prefs.edit().putBoolean("landscape_streaming_status", false).apply()
-      updateStatus("disconnected")
-      updateStreamButtonState()
-    } else {
-      // Not streaming, ensure UI reflects this
-      updateStatus("disconnected")
-      updateStreamButtonState()
-    }
+    scheduleServiceStateSync()
+  }
+
+  override fun onPause() {
+    serviceStateHandler.removeCallbacks(serviceStateSync)
+    super.onPause()
+  }
+
+  private fun scheduleServiceStateSync() {
+    serviceStateHandler.removeCallbacks(serviceStateSync)
+    serviceStateSyncAttempt = 0
+    serviceStateSync.run()
   }
 
   private fun initializeViews() {
@@ -619,6 +621,10 @@ class ScreenActivity : AppCompatActivity(), ConnectChecker {
 
   override fun onCreateOptionsMenu(menu: Menu): Boolean {
     menuInflater.inflate(R.menu.screen_menu, menu)
+    val supportsPlaybackCapture = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+    menu.findItem(R.id.audio_source_internal).isVisible = supportsPlaybackCapture
+    menu.findItem(R.id.audio_source_mix).isVisible = supportsPlaybackCapture
+    menu.findItem(R.id.audio_source_dual_channel).isVisible = supportsPlaybackCapture
     val defaultAudioSource = when (ScreenService.INSTANCE?.getCurrentAudioSource()) {
       is MicrophoneSource -> menu.findItem(R.id.audio_source_microphone)
       is InternalAudioSource -> menu.findItem(R.id.audio_source_internal)
@@ -632,7 +638,10 @@ class ScreenActivity : AppCompatActivity(), ConnectChecker {
   override fun onOptionsItemSelected(item: MenuItem): Boolean {
     try {
       when (item.itemId) {
-        R.id.audio_source_microphone, R.id.audio_source_internal, R.id.audio_source_mix -> {
+        R.id.audio_source_microphone,
+        R.id.audio_source_internal,
+        R.id.audio_source_mix,
+        R.id.audio_source_dual_channel -> {
           val service = ScreenService.INSTANCE
           if (service != null) {
             service.toggleAudioSource(item.itemId)
@@ -667,6 +676,7 @@ class ScreenActivity : AppCompatActivity(), ConnectChecker {
   }
 
   override fun onDestroy() {
+    serviceStateHandler.removeCallbacks(serviceStateSync)
     super.onDestroy()
     val screenService = ScreenService.INSTANCE
     if (screenService != null && !screenService.isStreaming() && !screenService.isRecording()) {
@@ -746,6 +756,16 @@ class ScreenActivity : AppCompatActivity(), ConnectChecker {
         button.setIcon(ContextCompat.getDrawable(this, R.drawable.stream_icon))
         button.text = "LIVE"
       }
+    }
+  }
+
+  private fun updateRecordButtonState() {
+    if (ScreenService.INSTANCE?.isRecording() == true) {
+      bRecord.setIcon(ContextCompat.getDrawable(this, R.drawable.stop_icon))
+      bRecord.text = "STOP"
+    } else {
+      bRecord.setIcon(ContextCompat.getDrawable(this, R.drawable.record_icon))
+      bRecord.text = "REC"
     }
   }
 }

@@ -38,6 +38,7 @@ import android.os.Looper
 import android.net.Uri
 import com.stream.prime.utils.PermissionManager
 import com.stream.prime.overlay.LayerManagerActivity
+import java.util.Locale
 
 @RequiresApi(api = Build.VERSION_CODES.LOLLIPOP)
 class UnifiedStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolder.Callback, SettingsManager.SettingsChangeListener {
@@ -46,6 +47,8 @@ class UnifiedStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolder
         private const val TAG = "UnifiedStreamActivity"
         private const val PERMISSION_REQUEST_CODE = 123
         private const val REQUEST_FOREGROUND_SERVICE_MEDIA_PROJECTION_PERMISSION = 124
+        private const val SERVICE_STATE_SYNC_ATTEMPTS = 20
+        private const val SERVICE_STATE_SYNC_DELAY_MS = 100L
     }
 
     private lateinit var binding: ActivityUnifiedStreamBinding
@@ -62,6 +65,37 @@ class UnifiedStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolder
     private var micVolume = 100
     private var deviceVolume = 100
     private var pendingAction: Action? = null
+    private val serviceStateHandler = Handler(Looper.getMainLooper())
+    private var serviceStateSyncAttempt = 0
+    private val serviceStateSync = object : Runnable {
+        override fun run() {
+            if (isFinishing || isDestroyed) return
+
+            val stateSourceReady = if (isFileStreaming) {
+                FileStreamService.INSTANCE != null
+            } else {
+                ScreenService.INSTANCE != null
+            }
+            if (!stateSourceReady) {
+                if (serviceStateSyncAttempt++ < SERVICE_STATE_SYNC_ATTEMPTS) {
+                    serviceStateHandler.postDelayed(this, SERVICE_STATE_SYNC_DELAY_MS)
+                }
+                return
+            }
+
+            updateStreamButtonState()
+            updateRecordButtonState()
+
+            if (!isFileStreaming) {
+                ScreenService.INSTANCE?.let { service ->
+                    if (service.isStreaming() || service.isRecording()) {
+                        service.setCallback(this@UnifiedStreamActivity)
+                    }
+                    if (service.isStreaming()) restoreActiveStreamUi(service)
+                }
+            }
+        }
+    }
 
     private enum class Action {
         STREAM, RECORD
@@ -278,37 +312,32 @@ class UnifiedStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolder
 
     override fun onResume() {
         super.onResume()
-        
-        // Check if service is still running and update UI accordingly
-        val service = ScreenService.INSTANCE
-        if (service != null && service.isStreaming()) {
-            service.restoreAudioSourceState()
-            updateMicrophoneButtonState()
-            
-            // Restore volume settings
-            loadVolumeSettings()
-            
-            // Restore stream duration if timer is not running
-            if (streamTimer == null) {
-                Log.d(TAG, "Timer not running but stream is active - restoring timer")
-                restoreStreamDuration()
-            } else {
-                Log.d(TAG, "Timer is already running")
-            }
-            
-            // Update stream button state
-            updateStreamButtonState()
-            
-            // Set callback to receive bitrate updates
-            service.setCallback(this)
-            
-            // Request current bitrate from service
-            requestCurrentBitrate()
-            
-            Log.d(TAG, "App resumed - restored streaming UI state")
-        } else {
-            Log.d(TAG, "No active stream found on resume")
+        scheduleServiceStateSync()
+    }
+
+    override fun onPause() {
+        serviceStateHandler.removeCallbacks(serviceStateSync)
+        super.onPause()
+    }
+
+    private fun scheduleServiceStateSync() {
+        serviceStateHandler.removeCallbacks(serviceStateSync)
+        serviceStateSyncAttempt = 0
+        serviceStateSync.run()
+    }
+
+    private fun restoreActiveStreamUi(service: ScreenService) {
+        service.restoreAudioSourceState()
+        updateMicrophoneButtonState()
+        loadVolumeSettings()
+
+        if (streamTimer == null) {
+            Log.d(TAG, "Timer not running but stream is active - restoring timer")
+            restoreStreamDuration()
         }
+
+        requestCurrentBitrate()
+        Log.d(TAG, "App resumed - restored active capture UI state")
     }
 
     private fun setupClickListeners() {
@@ -944,9 +973,23 @@ class UnifiedStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolder
 
     override fun onNewBitrate(bitrate: Long) {
         runOnUiThread {
-            val bitrateMbps = bitrate / 1000000.0
-            binding.txtBitrate.text = String.format("%.1f Mbps", bitrateMbps)
-            Log.d("UnifiedStreamActivity", "Bitrate updated: $bitrateMbps Mbps")
+            val liveBitrateMbps = bitrate / 1_000_000.0
+            val targetBitrateKbps = if (SettingsManager.getStreamingMode(this) == "Vertical") {
+                SettingsManager.getVerticalBitrate(this)
+            } else {
+                SettingsManager.getLandscapeBitrate(this)
+            }
+            val targetBitrateMbps = targetBitrateKbps / 1000.0
+            binding.txtBitrate.text = String.format(
+                Locale.US,
+                "Live %.1f • Target %.1f Mbps",
+                liveBitrateMbps,
+                targetBitrateMbps
+            )
+            Log.d(
+                "UnifiedStreamActivity",
+                "Bitrate updated: live=$liveBitrateMbps Mbps, target=$targetBitrateMbps Mbps"
+            )
         }
     }
 
@@ -983,6 +1026,7 @@ class UnifiedStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolder
     }
 
     override fun onDestroy() {
+        serviceStateHandler.removeCallbacks(serviceStateSync)
         super.onDestroy()
         SettingsManager.removeListener(this)
         ScreenService.INSTANCE?.setCallback(null)

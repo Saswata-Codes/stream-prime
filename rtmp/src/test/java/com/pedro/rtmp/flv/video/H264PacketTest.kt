@@ -55,4 +55,41 @@ class H264PacketTest {
     assertArrayEquals(expectedConfig, frames[0].buffer)
     assertArrayEquals(expectedFlvPacket, frames[1].buffer)
   }
+
+  @Test
+  fun `GIVEN multiple annex b nal units WHEN create packet THEN length prefix every nal`() = runTest {
+    val aud = byteArrayOf(0x09, 0x10)
+    val sei = byteArrayOf(0x06, 0x05, 0x01)
+    val idr = byteArrayOf(0x65, 0x11, 0x22, 0x33)
+    val accessUnit = byteArrayOf(0, 0, 0, 1).plus(aud)
+      .plus(byteArrayOf(0, 0, 1)).plus(sei)
+      .plus(byteArrayOf(0, 0, 0, 1)).plus(idr)
+    val mediaFrame = MediaFrame(
+      ByteBuffer.wrap(accessUnit),
+      MediaFrame.Info(0, accessUnit.size, 2_000_000L, false),
+      MediaFrame.Type.VIDEO
+    )
+    val h264Packet = H264Packet().apply {
+      sendVideoInfo(
+        ByteBuffer.wrap(byteArrayOf(0x67, 0x64, 0x00, 0x29)),
+        ByteBuffer.wrap(byteArrayOf(0x68, 0x00))
+      )
+    }
+    val packets = mutableListOf<FlvPacket>()
+
+    h264Packet.createFlvPacket(mediaFrame) { packets.add(it) }
+
+    assertEquals(2, packets.size)
+    assertArrayEquals(
+      byteArrayOf(
+        0x17, 0x01, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x02, 0x09, 0x10,
+        0x00, 0x00, 0x00, 0x03, 0x06, 0x05, 0x01,
+        0x00, 0x00, 0x00, 0x04, 0x65, 0x11, 0x22, 0x33
+      ),
+      packets[1].buffer
+    )
+    assertEquals(2_000, packets[1].timeStamp)
+  }
+
 }

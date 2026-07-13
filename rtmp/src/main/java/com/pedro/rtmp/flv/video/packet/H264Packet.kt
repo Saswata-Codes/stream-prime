@@ -42,6 +42,7 @@ class H264Packet: BasePacket() {
   private val naluSize = 4
   //first time we need send video config
   private var configSend = false
+  private var multiNalLogged = false
 
   private var sps: ByteArray? = null
   private var pps: ByteArray? = null
@@ -98,28 +99,79 @@ class H264Packet: BasePacket() {
       callback(FlvPacket(buffer, ts, buffer.size, FlvType.VIDEO))
       configSend = true
     }
-    val headerSize = getHeaderSize(fixedBuffer)
-    if (headerSize == 0) return //invalid buffer or waiting for sps/pps
-    fixedBuffer.rewind()
-    val validBuffer = removeHeader(fixedBuffer, headerSize)
-    val size = validBuffer.remaining()
-    buffer = ByteArray(header.size + size + naluSize)
-
-    val type: Int = (validBuffer.get(0) and 0x1F).toInt()
-    var nalType = VideoDataType.INTER_FRAME.value
-    if (type == VideoNalType.IDR.value || mediaFrame.info.isKeyFrame) {
-      nalType = VideoDataType.KEYFRAME.value
-    } else if (type == VideoNalType.SPS.value || type == VideoNalType.PPS.value) {
-      // we don't need send it because we already do it in video config
-      return
+    // MediaCodec is allowed to return one access unit containing multiple Annex-B NAL units.
+    // Huawei encoders commonly output AUD/SEI plus one or more slices in the same buffer. FLV AVC
+    // requires every NAL unit to have its own UInt32 length; treating the full access unit as one
+    // NAL makes the RTMP transport look healthy while a strict endpoint cannot decode any frame.
+    val nalUnits = splitAnnexBNalUnits(fixedBuffer).filter { nal ->
+      val type = (nal[0] and 0x1F).toInt()
+      type != VideoNalType.SPS.value && type != VideoNalType.PPS.value
     }
+    if (nalUnits.isEmpty()) return
+    if (nalUnits.size > 1 && !multiNalLogged) {
+      val types = nalUnits.joinToString(",") { nal -> ((nal[0] and 0x1F).toInt()).toString() }
+      Log.i(TAG, "Packetizing multi-NAL AVC access unit: count=${nalUnits.size}, types=$types")
+      multiNalLogged = true
+    }
+
+    val isKeyFrame = mediaFrame.info.isKeyFrame || nalUnits.any { nal ->
+      (nal[0] and 0x1F).toInt() == VideoNalType.IDR.value
+    }
+    val nalType = if (isKeyFrame) {
+      VideoDataType.KEYFRAME.value
+    } else {
+      VideoDataType.INTER_FRAME.value
+    }
+    val payloadSize = nalUnits.sumOf { naluSize + it.size }
+    buffer = ByteArray(header.size + payloadSize)
+
     header[0] = ((nalType shl 4) or VideoFormat.AVC.value).toByte()
     header[1] = Type.NALU.value
-    writeNaluSize(buffer, header.size, size)
-    validBuffer.get(buffer, header.size + naluSize, size)
 
+    var outputOffset = header.size
+    nalUnits.forEach { nal ->
+      writeNaluSize(buffer, outputOffset, nal.size)
+      outputOffset += naluSize
+      System.arraycopy(nal, 0, buffer, outputOffset, nal.size)
+      outputOffset += nal.size
+    }
     System.arraycopy(header, 0, buffer, 0, header.size)
     callback(FlvPacket(buffer, ts, buffer.size, FlvType.VIDEO))
+  }
+
+  private fun splitAnnexBNalUnits(byteBuffer: ByteBuffer): List<ByteArray> {
+    val input = byteBuffer.duplicate()
+    input.rewind()
+    val data = ByteArray(input.remaining())
+    input.get(data)
+
+    val result = mutableListOf<ByteArray>()
+    var start = findStartCode(data, 0) ?: return emptyList()
+    while (true) {
+      val payloadStart = start.first + start.second
+      val next = findStartCode(data, payloadStart)
+      val payloadEnd = next?.first ?: data.size
+      if (payloadEnd > payloadStart) {
+        result.add(data.copyOfRange(payloadStart, payloadEnd))
+      }
+      start = next ?: break
+    }
+    return result
+  }
+
+  private fun findStartCode(data: ByteArray, fromIndex: Int): Pair<Int, Int>? {
+    var index = fromIndex.coerceAtLeast(0)
+    while (index + 2 < data.size) {
+      if (data[index] == 0.toByte() && data[index + 1] == 0.toByte()) {
+        if (index + 3 < data.size && data[index + 2] == 0.toByte() &&
+          data[index + 3] == 1.toByte()) {
+          return index to 4
+        }
+        if (data[index + 2] == 1.toByte()) return index to 3
+      }
+      index++
+    }
+    return null
   }
 
   //naluSize = UInt32
@@ -180,5 +232,6 @@ class H264Packet: BasePacket() {
       pps = null
     }
     configSend = false
+    multiNalLogged = false
   }
 }

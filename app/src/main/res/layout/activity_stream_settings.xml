@@ -523,7 +523,7 @@
                                     android:layout_width="0dp"
                                     android:layout_height="wrap_content"
                                     android:layout_weight="1"
-                                    android:text="Bitrate (Mbps)"
+                                    android:text="Bitrate (kbps)"
                                     android:textSize="14sp"
                                     android:textColor="@color/prism_text_secondary" />
 
@@ -539,6 +539,7 @@
                                 android:layout_width="match_parent"
                                 android:layout_height="wrap_content"
                                 android:hint="Bitrate"
+                                app:helperText="Example: 10000 kbps = 10 Mbps"
                                 app:boxBackgroundColor="@color/prism_dark_surface_variant"
                                 app:boxStrokeColor="@color/prism_neon_purple"
                                 app:hintTextColor="@color/prism_neon_purple">
@@ -547,7 +548,7 @@
                                     android:id="@+id/et_bitrate"
                                     android:layout_width="match_parent"
                                     android:layout_height="wrap_content"
-                                    android:inputType="numberDecimal"
+                                    android:inputType="number"
                                     android:textColor="@color/prism_text_primary" />
 
                             </com.google.android.material.textfield.TextInputLayout>

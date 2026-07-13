@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  android:layout_width="match_parent"
+  android:layout_height="wrap_content"
+  android:orientation="vertical"
+  android:padding="12dp">
+
+  <TextView
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingBottom="10dp"
+    android:text="Long-press and drag ☰ to reorder. Top row appears in front."
+    android:textColor="#9EA4AF"
+    android:textSize="12sp" />
+
+  <androidx.recyclerview.widget.RecyclerView
+    android:id="@+id/recycler_layer_order"
+    android:layout_width="match_parent"
+    android:layout_height="360dp"
+    android:nestedScrollingEnabled="false" />
+</LinearLayout>

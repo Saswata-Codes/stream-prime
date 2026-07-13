@@ -21,6 +21,7 @@ import android.graphics.Point
 import android.graphics.SurfaceTexture
 import android.graphics.SurfaceTexture.OnFrameAvailableListener
 import android.os.Build
+import android.util.Log
 import android.view.Surface
 import androidx.annotation.RequiresApi
 import com.pedro.common.newSingleThreadExecutor
@@ -52,6 +53,10 @@ import kotlin.math.max
 @RequiresApi(api = Build.VERSION_CODES.JELLY_BEAN_MR2)
 class GlStreamInterface(private val context: Context): OnFrameAvailableListener, GlInterface {
 
+  companion object {
+    private const val TAG = "GlStreamInterface"
+  }
+
   private var takePhotoCallback: TakePhotoCallback? = null
   private val running = AtomicBoolean(false)
   private val surfaceManager = SurfaceManager()
@@ -59,6 +64,9 @@ class GlStreamInterface(private val context: Context): OnFrameAvailableListener,
   private val surfaceManagerEncoderRecord = SurfaceManager()
   private val surfaceManagerPhoto = SurfaceManager()
   private val surfaceManagerPreview = SurfaceManager()
+  // SurfaceHolder callbacks run on the UI thread while preview rendering runs on the GL
+  // executor. Guard the preview EGL surface so it can never be released during a draw.
+  private val previewSurfaceLock = Any()
   private val mainRender = MainRender()
   private var encoderWidth = 0
   private var encoderHeight = 0
@@ -278,18 +286,33 @@ class GlStreamInterface(private val context: Context): OnFrameAvailableListener,
         surfaceManagerPhoto.swapBuffer()
       }
     }
-    // render preview
-    if (surfaceManagerPreview.isReady && mainRender.isReady() && !limitFps) {
-      val w =  if (previewWidth == 0) encoderWidth else previewWidth
-      val h =  if (previewHeight == 0) encoderHeight else previewHeight
-      if (surfaceManager.makeCurrent()) {
-        mainRender.drawFilters(true)
-        surfaceManager.swapBuffer()
-      }
-      if (surfaceManagerPreview.makeCurrent()) {
-        mainRender.drawScreenPreview(w, h, orientationPreview, aspectRatioMode, 0,
-          isPreviewVerticalFlip, isPreviewHorizontalFlip, previewViewPort)
-        surfaceManagerPreview.swapBuffer()
+    // Render preview independently from the encoder. A destroyed Activity surface must
+    // never interrupt the headless encoder/RTMP path.
+    if (mainRender.isReady() && !limitFps) {
+      try {
+        synchronized(previewSurfaceLock) {
+          if (surfaceManagerPreview.isReady) {
+            val w = if (previewWidth == 0) encoderWidth else previewWidth
+            val h = if (previewHeight == 0) encoderHeight else previewHeight
+            if (surfaceManager.makeCurrent()) {
+              mainRender.drawFilters(true)
+              surfaceManager.swapBuffer()
+            }
+            if (surfaceManagerPreview.makeCurrent()) {
+              mainRender.drawScreenPreview(w, h, orientationPreview, aspectRatioMode, 0,
+                isPreviewVerticalFlip, isPreviewHorizontalFlip, previewViewPort)
+              surfaceManagerPreview.swapBuffer()
+            }
+          }
+        }
+      } catch (error: RuntimeException) {
+        // Some Android GPU drivers report GL_OUT_OF_MEMORY when the window surface is
+        // invalidated. Detach only that preview; streaming continues on the encoder surface.
+        synchronized(previewSurfaceLock) {
+          if (surfaceManagerPreview.isReady) surfaceManagerPreview.release()
+        }
+        Log.e(TAG, "Preview surface failed; continuing stream without preview", error)
+        renderErrorCallback?.onRenderError(error)
       }
     }
   }
@@ -343,14 +366,18 @@ class GlStreamInterface(private val context: Context): OnFrameAvailableListener,
   }
 
   fun attachPreview(surface: Surface) {
-    if (surfaceManager.isReady) {
-      surfaceManagerPreview.release()
-      surfaceManagerPreview.eglSetup(surface, surfaceManager)
+    synchronized(previewSurfaceLock) {
+      if (surfaceManager.isReady && surface.isValid) {
+        if (surfaceManagerPreview.isReady) surfaceManagerPreview.release()
+        surfaceManagerPreview.eglSetup(surface, surfaceManager)
+      }
     }
   }
 
   fun deAttachPreview() {
-    surfaceManagerPreview.release()
+    synchronized(previewSurfaceLock) {
+      if (surfaceManagerPreview.isReady) surfaceManagerPreview.release()
+    }
   }
 
   override fun setStreamRotation(orientation: Int) {
