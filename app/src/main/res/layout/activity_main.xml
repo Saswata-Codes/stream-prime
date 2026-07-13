@@ -317,9 +317,10 @@
 
             <!-- App Version -->
             <TextView
+                android:id="@+id/main_version_text"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="v1.0"
+                android:text="@string/version"
                 android:textSize="10sp"
                 android:textColor="@color/prism_text_tertiary" />
 

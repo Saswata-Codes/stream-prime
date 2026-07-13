@@ -109,7 +109,7 @@
         android:id="@+id/version_text"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="v1.0.0"
+        android:text="@string/version"
         android:textSize="12sp"
         android:textColor="@color/prism_text_secondary"
         android:layout_marginBottom="32dp"

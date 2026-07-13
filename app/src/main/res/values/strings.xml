@@ -62,7 +62,8 @@
     <string name="from_file">File Streaming</string>
     <string name="rotation_rtmp">Advanced Streaming</string>
     <string name="old_api">Classic Mode</string>
-    <string name="version">v1.0</string>
+    <string name="version">v2.0</string>
+    <string name="version_format">v%1$s</string>
     
     <!-- Quality Options -->
     <string name="resolution_360p">360p (640x360)</string>

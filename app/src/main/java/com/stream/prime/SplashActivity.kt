@@ -18,6 +18,7 @@ class SplashActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivitySplashBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        binding.versionText.text = getString(R.string.version_format, BuildConfig.VERSION_NAME)
 
         // Hide action bar for full-screen experience
         supportActionBar?.hide()
