@@ -111,6 +111,8 @@ class GenericStream(
       val resolution = super.getVideoResolution()
       rtmpClient.setVideoResolution(resolution.width, resolution.height)
       rtmpClient.setFps(super.getVideoFps())
+      rtmpClient.setVideoBitrate(super.getVideoBitrate())
+      rtmpClient.setAudioBitrate(super.getAudioBitrate())
       rtmpClient.connect(endPoint)
     } else if (endPoint.startsWith("rtsp", ignoreCase = true)) {
       connectedType = ClientType.RTSP

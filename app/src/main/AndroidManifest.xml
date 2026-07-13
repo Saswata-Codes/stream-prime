@@ -110,15 +110,15 @@
         android:theme="@style/Theme.RootEncoder" />
 
     <activity
-        android:name=".overlay.OverlayEditorActivity"
+        android:name=".overlay.LayerManagerActivity"
         android:exported="false"
-        android:label="Image Overlay"
+        android:label="Overlay Library"
         android:theme="@style/Theme.RootEncoder" />
 
     <activity
-        android:name=".overlay.LayerManagerActivity"
+        android:name=".overlay.OverlayStudioActivity"
         android:exported="false"
-        android:label="Overlay Layers"
+        android:label="Overlay Studio"
         android:theme="@style/Theme.RootEncoder" />
 
     <activity

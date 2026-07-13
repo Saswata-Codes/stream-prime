@@ -47,6 +47,7 @@ class RtmpSender(
 
   private var audioPacket: BasePacket = AacPacket()
   private var videoPacket: BasePacket = H264Packet()
+  private val timestampNormalizer = RealtimeTimestampNormalizer()
   var socket: RtmpSocket? = null
 
   override fun setVideoInfo(sps: ByteBuffer, pps: ByteBuffer?, vps: ByteBuffer?) {
@@ -76,10 +77,19 @@ class RtmpSender(
   }
 
   override suspend fun onRun() {
+    timestampNormalizer.reset()
     while (scope.isActive && running) {
       val error = runCatching {
         val mediaFrame = runInterruptible { queue.take() }
-        getFlvPacket(mediaFrame) { flvPacket ->
+        val normalizedFrame = mediaFrame.copy(
+          info = mediaFrame.info.copy(
+            timestamp = timestampNormalizer.normalize(
+              mediaFrame.info.timestamp,
+              mediaFrame.type
+            )
+          )
+        )
+        getFlvPacket(normalizedFrame) { flvPacket ->
           var size = 0
           if (flvPacket.type == FlvType.VIDEO) {
             videoFramesSent++
@@ -113,6 +123,7 @@ class RtmpSender(
   }
 
   override suspend fun stopImp(clear: Boolean) {
+    timestampNormalizer.reset()
     audioPacket.reset(clear)
     videoPacket.reset(clear)
   }

@@ -20,12 +20,16 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.media.MediaCodecInfo
 import android.media.AudioManager
 import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
+import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
+import android.view.Display
+import android.view.Surface
 import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import com.pedro.common.ConnectChecker
@@ -65,6 +69,12 @@ import com.pedro.encoder.input.gl.render.filters.`object`.ImageObjectFilterRende
 import com.pedro.encoder.utils.gl.TranslateTo
 import com.stream.prime.overlay.OverlayManager
 import com.stream.prime.overlay.LayeredOverlayRenderer
+import com.stream.prime.overlay.ScreenLayoutFilterRender
+import com.stream.prime.overlay.LayerCanvasRenderer
+import com.stream.prime.overlay.OverlayLayer
+import com.stream.prime.overlay.OverlayLayerOrdering
+import com.stream.prime.overlay.OverlayLayerType
+import com.stream.prime.overlay.CaptureDisplayAspect
 
 
 /**
@@ -102,8 +112,40 @@ class ScreenService: Service(), ConnectChecker {
   private val aBitrate = 256 * 1000  // Further increased to 256k for maximum quality
   private var prepared = false
   private var layeredOverlayRenderer: LayeredOverlayRenderer? = null
+  private var screenLayoutRenderer: ScreenLayoutFilterRender? = null
+  private lateinit var displayManager: DisplayManager
+  private var capturedDisplayRotationDegrees = 0
+  private var capturedDisplayLandscapeAspect = 16f / 9f
+  private val capturedDisplayListener = object : DisplayManager.DisplayListener {
+    override fun onDisplayAdded(displayId: Int) = Unit
+    override fun onDisplayRemoved(displayId: Int) = Unit
+
+    override fun onDisplayChanged(displayId: Int) {
+      if (displayId != Display.DEFAULT_DISPLAY) return
+      val newRotation = readCapturedDisplayRotation()
+      val newLandscapeAspect = CaptureDisplayAspect.landscapeAspect(this@ScreenService)
+      if (newRotation == capturedDisplayRotationDegrees &&
+        kotlin.math.abs(newLandscapeAspect - capturedDisplayLandscapeAspect) < 0.001f
+      ) return
+      capturedDisplayRotationDegrees = newRotation
+      capturedDisplayLandscapeAspect = newLandscapeAspect
+      screenLayoutRenderer?.updateCaptureRotation(newRotation)
+      screenLayoutRenderer?.updateCaptureLandscapeAspect(newLandscapeAspect)
+      Log.d(
+        TAG,
+        "Captured display changed: rotation=$newRotation°, landscapeAspect=$newLandscapeAspect; " +
+          "output canvas remains ${width}x$height"
+      )
+    }
+  }
   private var recordPath = ""
-  private var selectedAudioSource: Int = R.id.audio_source_mix
+  // Android playback capture (internal/mix audio) requires API 29.
+  // Older devices must start with microphone audio or prepareStream() will fail.
+  private var selectedAudioSource: Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+    R.id.audio_source_mix
+  } else {
+    R.id.audio_source_microphone
+  }
   private var isMicrophoneMuted = false
   private var notificationReceiver: BroadcastReceiver? = null
   
@@ -124,6 +166,56 @@ class ScreenService: Service(), ConnectChecker {
   private var reconnectEndTimeMs: Long = 0L
   private val reconnectTimeoutMs: Long = 60_000L
   private val reconnectIntervalMs: Long = 5_000L
+  private val reconnectHandler = Handler(Looper.getMainLooper())
+  private var pendingReconnect: Runnable? = null
+  @Volatile private var streamRequested = false
+  @Volatile private var serviceDestroyed = false
+
+  private fun cancelPendingReconnect() {
+    pendingReconnect?.let(reconnectHandler::removeCallbacks)
+    pendingReconnect = null
+  }
+
+  private fun resetReconnectState(clearEndpoint: Boolean) {
+    cancelPendingReconnect()
+    isReconnecting = false
+    reconnectEndTimeMs = 0L
+    if (clearEndpoint) currentEndpoint = null
+  }
+
+  private fun canReconnect(nowMs: Long = System.currentTimeMillis()): Boolean {
+    return StreamReconnectPolicy.shouldReconnect(
+      streamRequested = streamRequested,
+      serviceDestroyed = serviceDestroyed,
+      isCurrentService = INSTANCE === this,
+      nowMs = nowMs,
+      reconnectEndTimeMs = reconnectEndTimeMs
+    )
+  }
+
+  private fun scheduleManualReconnect(delayMs: Long, reason: String) {
+    cancelPendingReconnect()
+    val endpoint = currentEndpoint ?: return
+    val task = Runnable {
+      pendingReconnect = null
+      if (!canReconnect()) {
+        Log.d(TAG, "Reconnect cancelled ($reason): stream no longer requested")
+        return@Runnable
+      }
+      if (genericStream.isStreaming) {
+        Log.d(TAG, "Reconnect skipped ($reason): stream client is already active")
+        return@Runnable
+      }
+      Log.w(TAG, "Manual reconnect attempt to configured RTMP endpoint ($reason)")
+      try {
+        genericStream.startStream(endpoint)
+      } catch (e: Exception) {
+        Log.e(TAG, "Manual reconnect failed ($reason): ${e.message}")
+      }
+    }
+    pendingReconnect = task
+    reconnectHandler.postDelayed(task, delayMs)
+  }
 
   private fun loadQualitySettings() {
       // Get current streaming mode from settings using SettingsManager
@@ -164,7 +256,7 @@ class ScreenService: Service(), ConnectChecker {
           Log.d(TAG, "Volume settings loaded - Mic: $micVolume%, Device: $deviceVolume%")
           
           // Apply the loaded settings to the audio sources if streaming
-          if (genericStream.isStreaming) {
+          if (::genericStream.isInitialized && genericStream.isStreaming) {
               applyStreamAudioLevels()
               Log.d(TAG, "Applied loaded volume settings to active stream")
           }
@@ -174,6 +266,64 @@ class ScreenService: Service(), ConnectChecker {
           micVolume = 100
           deviceVolume = 100
       }
+  }
+
+  /**
+   * Prepare an AVC stream whose signalled level can actually carry the configured frame size and
+   * frame rate. Some Huawei encoders otherwise choose Level 3 for 1080x1920@60 even though the
+   * encoded frames exceed that level. RTMP then remains connected while strict endpoints discard
+   * the undecodable video track.
+   */
+  private fun prepareEndpointCompatibleVideo(rotationDegrees: Int): Boolean {
+    val profiles = intArrayOf(
+      // Baseline forbids B-frames. The RTMP/FLV path uses zero composition-time offset, so this
+      // profile is the deterministic choice for endpoints such as YouTube. High remains a device
+      // fallback when Baseline at the required level is unavailable.
+      MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline,
+      MediaCodecInfo.CodecProfileLevel.AVCProfileHigh
+    )
+
+    fun tryPrepare(targetFps: Int, targetLevel: Int): Boolean {
+      for (profile in profiles) {
+        Log.i(
+          TAG,
+          "Preparing AVC ${width}x${height}@$targetFps profile=$profile level=$targetLevel"
+        )
+        try {
+          if (genericStream.prepareVideo(
+              width = width,
+              height = height,
+              bitrate = vBitrate,
+              fps = targetFps,
+              iFrameInterval = 2,
+              rotation = rotationDegrees,
+              profile = profile,
+              level = targetLevel
+            )) {
+            fps = targetFps
+            genericStream.getGlInterface().setForceRender(true, fps)
+            Log.i(TAG, "Prepared endpoint-compatible AVC profile=$profile level=$targetLevel")
+            return true
+          }
+        } catch (error: IllegalArgumentException) {
+          Log.w(TAG, "AVC profile=$profile level=$targetLevel rejected: ${error.message}")
+        }
+      }
+      return false
+    }
+
+    val requiredLevel = if (fps > 30) {
+      MediaCodecInfo.CodecProfileLevel.AVCLevel42
+    } else {
+      MediaCodecInfo.CodecProfileLevel.AVCLevel41
+    }
+    if (tryPrepare(fps, requiredLevel)) return true
+
+    if (fps > 30) {
+      Log.w(TAG, "Configured 60fps AVC mode unsupported; retrying at 30fps Level 4.1")
+      return tryPrepare(30, MediaCodecInfo.CodecProfileLevel.AVCLevel41)
+    }
+    return false
   }
 
   private fun saveVolumeSettings() {
@@ -189,12 +339,30 @@ class ScreenService: Service(), ConnectChecker {
       }
   }
 
+  private fun configureStreamConnectionPolicy() {
+    val streamClient = genericStream.getStreamClient()
+    // Retry time is bounded by this service's reconnect deadline.
+    streamClient.setReTries(100)
+    // RTMP already detects real disconnects through socket reads/writes. The optional alive check
+    // uses an ICMP reachability probe which many production relays block, producing a false
+    // "No response from server" while media packets are still being accepted.
+    streamClient.setCheckServerAlive(false)
+  }
+
   override fun onCreate() {
     super.onCreate()
+    serviceDestroyed = false
+    streamRequested = false
+    resetReconnectState(clearEndpoint = true)
     INSTANCE = this
     Log.d(TAG, "ScreenService created")
+    Log.i(TAG, "App version ${com.stream.prime.BuildConfig.VERSION_NAME} (${com.stream.prime.BuildConfig.VERSION_CODE})")
     Log.i(TAG, "RTP Display service create")
     notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+    displayManager = getSystemService(DISPLAY_SERVICE) as DisplayManager
+    capturedDisplayRotationDegrees = readCapturedDisplayRotation()
+    capturedDisplayLandscapeAspect = CaptureDisplayAspect.landscapeAspect(this)
+    displayManager.registerDisplayListener(capturedDisplayListener, Handler(Looper.getMainLooper()))
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
       val channel = NotificationChannel(CHANNEL_ID, CHANNEL_ID, NotificationManager.IMPORTANCE_HIGH)
       notificationManager?.createNotificationChannel(channel)
@@ -215,17 +383,13 @@ class ScreenService: Service(), ConnectChecker {
       getGlInterface().autoHandleOrientation = false
     }
     
-    // Configure connection retries and timeouts
-    // Allow many internal retries; we will bound by time (60s) in ConnectChecker callbacks
-    genericStream.getStreamClient().setReTries(100)
-    // Enable server alive checks so we detect silent link losses
-    genericStream.getStreamClient().setCheckServerAlive(true)
+    configureStreamConnectionPolicy()
     
     prepared = try {
       Log.d("ScreenService", "Initial prepareVideo with settings: ${width}x${height}, ${fps}fps, ${vBitrate}bps")
       // Always use rotation=0 to prevent forced screen orientation
       // The streaming mode only affects video output quality settings, not screen orientation
-      genericStream.prepareVideo(width, height, vBitrate, rotation = 0, fps = fps) &&
+      prepareEndpointCompatibleVideo(rotationDegrees = 0) &&
           genericStream.prepareAudio(sampleRate, isStereo, aBitrate,
             echoCanceler = true,
             noiseSuppressor = true
@@ -246,6 +410,7 @@ class ScreenService: Service(), ConnectChecker {
     Log.d(TAG, "=== APPLYING VOLUME SETTINGS ON SERVICE START ===")
     Log.d(TAG, "Loaded volume settings - Mic: $micVolume%, Device: $deviceVolume%")
     applyStreamAudioLevels()
+
 
     // Load stream start time
     loadStreamStartTime()
@@ -439,6 +604,10 @@ class ScreenService: Service(), ConnectChecker {
   fun attachPreview(surfaceView: android.view.SurfaceView) {
     try {
       // Must be called after prepareVideo
+      if (genericStream.isOnPreview) {
+        Log.d(TAG, "Preview already attached; ignoring duplicate request")
+        return
+      }
       genericStream.startPreview(surfaceView, true)
       Log.d(TAG, "Preview attached to SurfaceView")
     } catch (e: Exception) {
@@ -482,6 +651,10 @@ class ScreenService: Service(), ConnectChecker {
                 updateNotification()
             }, 100)
         }
+        ACTION_APPLY_OVERLAY -> {
+            Log.d(TAG, "Apply overlay action received by service")
+            applyConfiguredOverlay()
+        }
     }
     
     return START_STICKY
@@ -500,29 +673,33 @@ class ScreenService: Service(), ConnectChecker {
   }
 
   fun stopStream() {
+    // Set intent before disconnecting. RtmpClient reports an asynchronous onDisconnect;
+    // without this guard a user Stop is mistaken for a network failure and reconnects.
+    streamRequested = false
+    resetReconnectState(clearEndpoint = true)
     try {
       if (genericStream.isStreaming) {
         genericStream.stopStream()
         Log.d("ScreenService", "Stream stopped")
-        
-        // Clear stream start time
-        streamStartTime = 0
-        saveStreamStartTime()
-        
-        // If no recording is happening, stop the service entirely
-        if (!genericStream.isRecording) {
-          Log.d("ScreenService", "No recording active, stopping service")
-          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-          } else {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
-          }
-          stopSelf()
+      } else {
+        Log.d(TAG, "Stop requested while RTMP was connecting/retrying")
+      }
+
+      // Clear stream state even when the RTMP client is between retry attempts.
+      streamStartTime = 0
+      saveStreamStartTime()
+
+      if (!genericStream.isRecording) {
+        Log.d("ScreenService", "No recording active, stopping service")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+          stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
-          // Update notification if recording is still active
-          updateNotification()
+          @Suppress("DEPRECATION")
+          stopForeground(true)
         }
+        stopSelf()
+      } else {
+        updateNotification()
       }
     } catch (e: Exception) {
       Log.e("ScreenService", "Error stopping stream: ${e.message}")
@@ -561,7 +738,10 @@ class ScreenService: Service(), ConnectChecker {
   }
 
   override fun onDestroy() {
-    super.onDestroy()
+    // Invalidate every delayed/network callback before releasing stream resources.
+    serviceDestroyed = true
+    streamRequested = false
+    resetReconnectState(clearEndpoint = true)
     try {
       // Unregister broadcast receiver
       notificationReceiver?.let {
@@ -577,30 +757,42 @@ class ScreenService: Service(), ConnectChecker {
         stopForeground(true)
       }
       
-      // Stop stream if running
-      if (isStreaming()) {
-        stopStream()
+      // Release the entire stream object, including preview EGL and MediaProjection
+      // resources. Leaving preview attached lets a replacement service create a second
+      // publisher but fail to attach the same SurfaceView with EGL_BAD_ALLOC.
+      if (::genericStream.isInitialized) {
+        val wasRecording = genericStream.isRecording
+        genericStream.release()
+        if (wasRecording && recordPath.isNotBlank()) PathUtils.updateGallery(this, recordPath)
       }
-      
-      // Stop recording if running
-      if (isRecording()) {
-        stopRecording()
-      }
+      mediaProjection?.stop()
+      mediaProjection = null
       
       // Clean up overlay renderer
       layeredOverlayRenderer?.release()
       layeredOverlayRenderer = null
+      screenLayoutRenderer = null
+      if (::displayManager.isInitialized) {
+        displayManager.unregisterDisplayListener(capturedDisplayListener)
+      }
       
       INSTANCE = null
+      callback = null
       Log.d(TAG, "ScreenService destroyed")
     } catch (e: Exception) {
       Log.e(TAG, "Error destroying service: ${e.message}")
+    } finally {
+      super.onDestroy()
     }
   }
 
   fun prepareStream(resultCode: Int, data: Intent): Boolean {
     keepAliveTrick()
-    stopStream()
+    // Re-prepare encoders without stopping this service. The public stopStream() represents
+    // a user Stop and intentionally calls stopSelf().
+    streamRequested = false
+    resetReconnectState(clearEndpoint = true)
+    if (genericStream.isStreaming) genericStream.stopStream()
     mediaProjection?.stop()
     
     // Force reload quality settings from centralized Stream Settings
@@ -614,7 +806,7 @@ class ScreenService: Service(), ConnectChecker {
     // Reinitialize video preparation with new settings
     prepared = try {
       Log.d("ScreenService", "Preparing video with settings: ${width}x${height}, ${fps}fps, ${vBitrate}bps, rotation=$rotation")
-      genericStream.prepareVideo(width, height, vBitrate, rotation = rotation, fps = fps) &&
+      prepareEndpointCompatibleVideo(rotationDegrees = rotation) &&
           genericStream.prepareAudio(sampleRate, isStereo, aBitrate,
             echoCanceler = true,
             noiseSuppressor = true
@@ -664,56 +856,55 @@ class ScreenService: Service(), ConnectChecker {
       }
       R.id.audio_source_internal -> {
         Log.d(TAG, "Switching to InternalAudioSource")
-        selectedAudioSource = R.id.audio_source_internal
         if (genericStream.audioSource is InternalAudioSource) {
+          selectedAudioSource = R.id.audio_source_internal
           Log.d(TAG, "Already using InternalAudioSource, no change needed")
           return
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-          mediaProjection?.let { 
+          mediaProjection?.let {
+            selectedAudioSource = R.id.audio_source_internal
             genericStream.changeAudioSource(InternalAudioSource(it))
             Log.d(TAG, "Successfully switched to InternalAudioSource")
           } ?: run {
-            Log.e(TAG, "MediaProjection is null, cannot switch to InternalAudioSource")
+            fallbackToMicrophone("MediaProjection unavailable for InternalAudioSource")
           }
         } else {
-          Log.e(TAG, "API level too low for InternalAudioSource")
-          throw IllegalArgumentException("You need min API 29+")
+          fallbackToMicrophone("InternalAudioSource requires Android 10+")
         }
       }
       R.id.audio_source_mix -> {
         Log.d(TAG, "Switching to MixAudioSource")
-        selectedAudioSource = R.id.audio_source_mix
         if (genericStream.audioSource is MixAudioSource) {
+          selectedAudioSource = R.id.audio_source_mix
           Log.d(TAG, "Already using MixAudioSource, no change needed")
           return
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-          mediaProjection?.let { 
+          mediaProjection?.let {
+            selectedAudioSource = R.id.audio_source_mix
             genericStream.changeAudioSource(MixAudioSource(it, context = this))
             Log.d(TAG, "Successfully switched to MixAudioSource")
           } ?: run {
-            Log.e(TAG, "MediaProjection is null, cannot switch to MixAudioSource")
+            fallbackToMicrophone("MediaProjection unavailable for MixAudioSource")
           }
         } else {
-          Log.e(TAG, "API level too low for MixAudioSource")
-          throw IllegalArgumentException("You need min API 29+")
+          fallbackToMicrophone("MixAudioSource requires Android 10+")
         }
       }
       R.id.audio_source_dual_channel -> {
         Log.d(TAG, "Switching to Dual Channel Audio (separate tracks)")
-        selectedAudioSource = R.id.audio_source_dual_channel
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
           mediaProjection?.let { projection ->
+            selectedAudioSource = R.id.audio_source_dual_channel
             // Use MixAudioSource with anti-feedback measures
             genericStream.changeAudioSource(MixAudioSource(projection, context = this))
             Log.d(TAG, "Successfully switched to Dual Channel Audio (using enhanced MixAudioSource)")
           } ?: run {
-            Log.e(TAG, "MediaProjection is null, cannot switch to Dual Channel Audio")
+            fallbackToMicrophone("MediaProjection unavailable for Dual Channel Audio")
           }
         } else {
-          Log.e(TAG, "API level too low for Dual Channel Audio")
-          throw IllegalArgumentException("You need min API 29+")
+          fallbackToMicrophone("Dual Channel Audio requires Android 10+")
         }
       }
     }
@@ -723,6 +914,14 @@ class ScreenService: Service(), ConnectChecker {
     
     // Verify audio controls after audio source change
     verifyAudioControlsAndStates()
+  }
+
+  private fun fallbackToMicrophone(reason: String) {
+    Log.w(TAG, "$reason; falling back to microphone audio")
+    selectedAudioSource = R.id.audio_source_microphone
+    if (genericStream.audioSource !is PristineAudioSource) {
+      genericStream.changeAudioSource(PristineAudioSource(this))
+    }
   }
 
   fun toggleRecord(state: (RecordController.Status) -> Unit) {
@@ -830,8 +1029,16 @@ class ScreenService: Service(), ConnectChecker {
       callback?.onConnectionFailed("Invalid RTMP URL format")
       return
     }
+
+    if (serviceDestroyed || INSTANCE !== this) {
+      Log.w(TAG, "Ignoring stream start from an inactive service instance")
+      callback?.onConnectionFailed("Streaming service is no longer active")
+      return
+    }
     
     // Remember endpoint for reconnection
+    streamRequested = true
+    resetReconnectState(clearEndpoint = false)
     currentEndpoint = endpoint
 
     // Ensure quality settings are up to date before streaming
@@ -877,10 +1084,6 @@ class ScreenService: Service(), ConnectChecker {
         streamStartTime = System.currentTimeMillis()
         saveStreamStartTime()
         
-        // Reset reconnect window on fresh start
-        isReconnecting = false
-        reconnectEndTimeMs = 0L
-
         genericStream.startStream(endpoint)
         Log.d("ScreenService", "Stream start initiated")
         
@@ -929,10 +1132,11 @@ class ScreenService: Service(), ConnectChecker {
       // Disable automatic orientation handling to prevent forced screen rotation
       getGlInterface().autoHandleOrientation = false
     }
+    configureStreamConnectionPolicy()
     
     prepared = try {
       // Always use rotation=0 to prevent forced screen orientation
-      genericStream.prepareVideo(width, height, vBitrate, rotation = 0, fps = fps) &&
+      prepareEndpointCompatibleVideo(rotationDegrees = 0) &&
           genericStream.prepareAudio(sampleRate, isStereo, aBitrate,
             echoCanceler = true,
             noiseSuppressor = true
@@ -970,34 +1174,85 @@ class ScreenService: Service(), ConnectChecker {
       
       // Clear existing overlay filters first
       gl.clearFilters()
+      layeredOverlayRenderer = null
+      screenLayoutRenderer = null
       
-      if (!cfg.enabled || cfg.layers.isEmpty()) {
-        // Release the renderer if no overlays are needed
-        layeredOverlayRenderer?.release()
-        layeredOverlayRenderer = null
-        return
+      val isVerticalCanvas = height > width
+      val enabledLayers = if (cfg.enabled) cfg.layers.filter {
+        it.enabled && (it.type == OverlayLayerType.TEXT || it.imageUri.isNotEmpty())
+      } else emptyList()
+      val (allBelowScreen, allAboveScreen) = OverlayLayerOrdering.splitAtScreen(cfg.layers, cfg.screenLayerPosition)
+      val enabledIds = enabledLayers.map { it.id }.toSet()
+      val belowScreen = allBelowScreen.filter { it.id in enabledIds }
+      val aboveScreen = allAboveScreen.filter { it.id in enabledIds }
+      val needsScreenLayer = isVerticalCanvas ||
+        (cfg.enabled && (!cfg.screenLayout.isDefault() || !cfg.landscapeScreenLayout.isDefault() || belowScreen.isNotEmpty()))
+
+      // First orient and place/zoom the captured screen on the fixed output canvas.
+      // Vertical mode keeps this renderer even with overlays disabled so landscape apps fit.
+      if (needsScreenLayer) {
+        screenLayoutRenderer = ScreenLayoutFilterRender(
+          cfg.screenPreset,
+          cfg.screenLayout,
+          cfg.landscapeScreenLayout,
+          cfg.portraitScreenFitMode,
+          cfg.landscapeScreenFitMode,
+          cfg.canvasTheme,
+          capturedDisplayLandscapeAspect
+        ).also { renderer ->
+          renderer.setCanvasSize(width, height)
+          renderer.updateCaptureRotation(if (isVerticalCanvas) capturedDisplayRotationDegrees else 0)
+          renderer.updateCaptureLandscapeAspect(capturedDisplayLandscapeAspect)
+          if (belowScreen.isNotEmpty()) renderer.setBackgroundImage(renderOverlayBitmap(belowScreen))
+          gl.addFilter(renderer)
+        }
       }
-      
-      // Initialize identical canvas renderer if needed
-      if (layeredOverlayRenderer == null) {
-        layeredOverlayRenderer = LayeredOverlayRenderer(this)
+
+      if (!cfg.enabled) return
+
+      // Composite only layers placed above Screen; lower layers are in its background texture.
+      if (aboveScreen.isNotEmpty()) {
+        layeredOverlayRenderer = LayeredOverlayRenderer(this).also { renderer ->
+          renderer.setCanvasSize(width, height)
+          renderer.updateLayers(aboveScreen)
+          gl.addFilter(renderer)
+        }
       }
-      
-      val renderer = layeredOverlayRenderer!!
-      
-      // Set canvas size to match stream resolution
-      renderer.setCanvasSize(width, height)
-      
-      // Update all layers - uses IDENTICAL canvas rendering logic as preview
-      renderer.updateLayers(cfg.layers)
-      
-      // Apply the renderer - now using identical canvas logic as OverlayPreviewView
-      gl.addFilter(renderer)
-      
-      Log.d(TAG, "Applied layered overlay with ${cfg.layers.size} layers on single canvas")
+
+      Log.d(
+        TAG,
+        "Applied canvas composition: portrait=${cfg.screenLayout}, " +
+          "landscape=${cfg.landscapeScreenLayout}, frame=${cfg.screenPreset}, " +
+          "below=${belowScreen.size}, above=${aboveScreen.size}"
+      )
     } catch (e: Exception) {
       // Avoid crashing service due to overlay errors
       Log.e(TAG, "Error applying layered overlay: ${e.message}")
+    }
+  }
+
+  private fun renderOverlayBitmap(layers: List<OverlayLayer>): Bitmap? {
+    val bitmap = LayerCanvasRenderer.createCanvasBitmap(width, height) ?: return null
+    val cache = mutableMapOf<String, Bitmap?>()
+    LayerCanvasRenderer.renderLayersOnCanvas(
+      canvas = android.graphics.Canvas(bitmap),
+      layers = layers,
+      canvasWidth = width.toFloat(),
+      canvasHeight = height.toFloat(),
+      context = this,
+      layerBitmapCache = cache
+    )
+    LayerCanvasRenderer.clearBitmapCache(cache)
+    return bitmap
+  }
+
+  private fun readCapturedDisplayRotation(): Int {
+    val rotation = displayManager.getDisplay(Display.DEFAULT_DISPLAY)?.rotation ?: Surface.ROTATION_0
+    return when (rotation) {
+      Surface.ROTATION_90 -> 90
+      Surface.ROTATION_180 -> 180
+      Surface.ROTATION_270 -> 270
+      else -> 0
     }
   }
 
@@ -1066,10 +1321,11 @@ class ScreenService: Service(), ConnectChecker {
       // Disable automatic orientation handling to prevent forced screen rotation
       getGlInterface().autoHandleOrientation = false
     }
+    configureStreamConnectionPolicy()
     
     prepared = try {
       // Always use rotation=0 to prevent forced screen orientation
-      genericStream.prepareVideo(width, height, vBitrate, rotation = 0, fps = fps) &&
+      prepareEndpointCompatibleVideo(rotationDegrees = 0) &&
           genericStream.prepareAudio(sampleRate, isStereo, aBitrate,
             echoCanceler = true,
             noiseSuppressor = true
@@ -1908,10 +2164,28 @@ class ScreenService: Service(), ConnectChecker {
   }
 
   override fun onConnectionStarted(url: String) {
-    callback?.onConnectionStarted(url)
+    if (streamRequested && !serviceDestroyed) callback?.onConnectionStarted(url)
   }
 
   override fun onConnectionSuccess() {
+    if (!streamRequested || serviceDestroyed || INSTANCE !== this) {
+      Log.w(TAG, "Ignoring late connection success after stream stop")
+      try {
+        if (genericStream.isStreaming) genericStream.stopStream()
+      } catch (e: Exception) {
+        Log.e(TAG, "Error closing late RTMP connection: ${e.message}")
+      }
+      return
+    }
+    resetReconnectState(clearEndpoint = false)
+    // Re-assert the configured target after the Huawei encoder is running. Some vendor codecs
+    // accept the initial MediaFormat value but only apply runtime rate control after start().
+    genericStream.setVideoBitrateOnFly(vBitrate)
+    Log.i(TAG, "Re-applied encoder bitrate target after publish start: ${vBitrate}bps")
+    // The encoder starts before the RTMP publish handshake completes. Ask for a fresh IDR after
+    // the sender is live so the endpoint never has to wait for (or recover from) a missing GOP.
+    genericStream.requestKeyframe()
+    Log.i(TAG, "Requested fresh keyframe after RTMP publish start")
     callback?.onConnectionSuccess()
   }
 
@@ -1922,6 +2196,10 @@ class ScreenService: Service(), ConnectChecker {
 
   override fun onConnectionFailed(reason: String) {
     Log.e(TAG, "Connection failed: $reason")
+    if (!streamRequested || serviceDestroyed || INSTANCE !== this) {
+      Log.d(TAG, "Ignoring connection failure after intentional stop")
+      return
+    }
     // Attempt auto-reconnect for up to 60s while keeping encoders running
     if (!isReconnecting) {
       isReconnecting = true
@@ -1935,20 +2213,8 @@ class ScreenService: Service(), ConnectChecker {
       val retried = genericStream.getStreamClient().reTry(delay, reason)
       Log.w(TAG, "Scheduling reconnect in ${delay}ms. accepted=$retried remaining=${remaining}ms")
       if (!retried) {
-        // If client refuses to retry, fall back to manual restart using saved endpoint
-        val ep = currentEndpoint
-        if (ep != null) {
-          Handler(Looper.getMainLooper()).postDelayed({
-            if (!genericStream.isStreaming && System.currentTimeMillis() < reconnectEndTimeMs) {
-              Log.w(TAG, "Manual reconnect attempt to configured RTMP endpoint")
-              try {
-                genericStream.startStream(ep)
-              } catch (e: Exception) {
-                Log.e(TAG, "Manual reconnect failed: ${e.message}")
-              }
-            }
-          }, delay)
-        }
+        // If client refuses to retry, fall back to one service-owned delayed restart.
+        scheduleManualReconnect(delay, "connection failure")
       }
       // Do not stop service here; we'll let retries proceed within the window
       callback?.onConnectionFailed("Retrying: $reason")
@@ -1956,8 +2222,8 @@ class ScreenService: Service(), ConnectChecker {
     }
 
     // Exhausted reconnect window: cleanup and notify
-    isReconnecting = false
-    reconnectEndTimeMs = 0L
+    streamRequested = false
+    resetReconnectState(clearEndpoint = true)
     try {
       if (genericStream.isStreaming) genericStream.stopStream()
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -1976,6 +2242,13 @@ class ScreenService: Service(), ConnectChecker {
   override fun onDisconnect() {
     Log.d(TAG, "Connection disconnected")
 
+    if (!streamRequested || serviceDestroyed || INSTANCE !== this) {
+      Log.d(TAG, "Intentional disconnect completed; reconnect disabled")
+      resetReconnectState(clearEndpoint = true)
+      callback?.onDisconnect()
+      return
+    }
+
     // Treat unexpected disconnect like failure and attempt reconnect within window
     if (!isReconnecting) {
       isReconnecting = true
@@ -1987,27 +2260,15 @@ class ScreenService: Service(), ConnectChecker {
       val retried = genericStream.getStreamClient().reTry(delay, "disconnect")
       Log.w(TAG, "Scheduling reconnect after disconnect in ${delay}ms. accepted=$retried remaining=${remaining}ms")
       if (!retried) {
-        val ep = currentEndpoint
-        if (ep != null) {
-          Handler(Looper.getMainLooper()).postDelayed({
-            if (!genericStream.isStreaming && System.currentTimeMillis() < reconnectEndTimeMs) {
-              Log.w(TAG, "Manual reconnect attempt to configured RTMP endpoint after disconnect")
-              try {
-                genericStream.startStream(ep)
-              } catch (e: Exception) {
-                Log.e(TAG, "Manual reconnect failed after disconnect: ${e.message}")
-              }
-            }
-          }, delay)
-        }
+        scheduleManualReconnect(delay, "disconnect")
       }
       callback?.onDisconnect()
       return
     }
 
     // Exhausted reconnect window; perform cleanup
-    isReconnecting = false
-    reconnectEndTimeMs = 0L
+    streamRequested = false
+    resetReconnectState(clearEndpoint = true)
     try {
       if (genericStream.isStreaming) genericStream.stopStream()
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {

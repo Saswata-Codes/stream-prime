@@ -56,6 +56,25 @@ class VerticalStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolde
   private var surfaceReady = false
   private var serviceStarted = false
   private var action = Action.STREAM
+  private val serviceStateHandler = Handler(Looper.getMainLooper())
+  private var serviceStateSyncAttempt = 0
+  private val serviceStateSync = object : Runnable {
+    override fun run() {
+      if (isFinishing || isDestroyed) return
+      val service = ScreenService.INSTANCE
+      if (service == null) {
+        if (serviceStateSyncAttempt++ < SERVICE_STATE_SYNC_ATTEMPTS) {
+          serviceStateHandler.postDelayed(this, SERVICE_STATE_SYNC_DELAY_MS)
+        }
+        return
+      }
+
+      service.setCallback(this@VerticalStreamActivity)
+      updateStreamButtonState()
+      updateRecordButtonState()
+      updateStatus(if (service.isStreaming()) "connected" else "disconnected")
+    }
+  }
   private val activityResultContract = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
       if (result.resultCode == RESULT_OK) {
           val data = result.data
@@ -95,6 +114,8 @@ class VerticalStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolde
     private const val PERMISSION_REQUEST_CODE = 1
     private const val SCREEN_CAPTURE_REQUEST_CODE = 2
     private const val FOREGROUND_SERVICE_MEDIA_PROJECTION_PERMISSION = 3
+    private const val SERVICE_STATE_SYNC_ATTEMPTS = 20
+    private const val SERVICE_STATE_SYNC_DELAY_MS = 100L
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -116,30 +137,18 @@ class VerticalStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolde
       super.onResume()
       // Reload quality settings when returning from Stream Settings
       ScreenService.INSTANCE?.reloadQualitySettings()
-      
-      // Restore streaming status from SharedPreferences
-      val prefs = getSharedPreferences("StreamStatus", 0)
-      val isStreaming = prefs.getBoolean("vertical_streaming_status", false)
-      
-      // Check actual streaming state and update UI accordingly
-      val service = ScreenService.INSTANCE
-      if (service != null && service.isStreaming()) {
-        // Stream is actually running, update UI to reflect this
-        updateStatus("connected")
-        updateStreamButtonState()
-        // Request current bitrate from service
-        service.setCallback(this)
-        // Note: Bitrate will be updated by onNewBitrate callback when it comes
-      } else if (isStreaming && service?.isStreaming() != true) {
-        // If status says streaming but service isn't, fix status
-        prefs.edit().putBoolean("vertical_streaming_status", false).apply()
-        updateStatus("disconnected")
-        updateStreamButtonState()
-      } else {
-        // Not streaming, ensure UI reflects this
-        updateStatus("disconnected")
-        updateStreamButtonState()
-      }
+      scheduleServiceStateSync()
+  }
+
+  override fun onPause() {
+    serviceStateHandler.removeCallbacks(serviceStateSync)
+    super.onPause()
+  }
+
+  private fun scheduleServiceStateSync() {
+    serviceStateHandler.removeCallbacks(serviceStateSync)
+    serviceStateSyncAttempt = 0
+    serviceStateSync.run()
   }
 
   private fun initializeViews() {
@@ -211,6 +220,16 @@ class VerticalStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolde
       button.setIcon(ContextCompat.getDrawable(this, R.drawable.stream_icon))
       button.text = "LIVE"
       button.backgroundTintList = ContextCompat.getColorStateList(this, R.color.status_offline)
+    }
+  }
+
+  private fun updateRecordButtonState() {
+    if (ScreenService.INSTANCE?.isRecording() == true) {
+      bRecord.setIcon(ContextCompat.getDrawable(this, R.drawable.stop_icon))
+      bRecord.text = "STOP"
+    } else {
+      bRecord.setIcon(ContextCompat.getDrawable(this, R.drawable.record_icon))
+      bRecord.text = "REC"
     }
   }
 
@@ -431,6 +450,7 @@ class VerticalStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolde
   }
 
   override fun onDestroy() {
+    serviceStateHandler.removeCallbacks(serviceStateSync)
     super.onDestroy()
     ScreenService.INSTANCE?.setCallback(null)
   }

@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  android:layout_width="match_parent"
+  android:layout_height="match_parent"
+  android:background="#101114"
+  android:orientation="vertical">
+
+  <LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="56dp"
+    android:background="#08090A"
+    android:gravity="center_vertical"
+    android:paddingHorizontal="12dp">
+
+    <TextView
+      android:id="@+id/btn_close"
+      android:layout_width="64dp"
+      android:layout_height="match_parent"
+      android:gravity="center"
+      android:text="Close"
+      android:textColor="#FFFFFF"
+      android:textSize="14sp" />
+
+    <TextView
+      android:id="@+id/text_project_name"
+      android:layout_width="0dp"
+      android:layout_height="match_parent"
+      android:layout_weight="1"
+      android:ellipsize="end"
+      android:gravity="center"
+      android:maxLines="1"
+      android:text="Overlay Studio"
+      android:textColor="#FFFFFF"
+      android:textSize="17sp"
+      android:textStyle="bold" />
+
+    <TextView
+      android:id="@+id/btn_save_project"
+      android:layout_width="64dp"
+      android:layout_height="match_parent"
+      android:gravity="center"
+      android:text="Save"
+      android:textColor="#00E676"
+      android:textSize="14sp"
+      android:textStyle="bold" />
+  </LinearLayout>
+
+  <FrameLayout
+    android:layout_width="match_parent"
+    android:layout_height="0dp"
+    android:layout_marginHorizontal="12dp"
+    android:layout_weight="1"
+    android:background="#000000">
+
+    <com.stream.prime.overlay.OverlayStudioView
+      android:id="@+id/overlay_studio_canvas"
+      android:layout_width="match_parent"
+      android:layout_height="match_parent" />
+  </FrameLayout>
+
+  <TextView
+    android:id="@+id/text_selection"
+    android:layout_width="match_parent"
+    android:layout_height="34dp"
+    android:gravity="center"
+    android:text="Screen selected · drag / pinch / twist"
+    android:textColor="#B8BDC7"
+    android:textSize="12sp" />
+
+  <HorizontalScrollView
+    android:layout_width="match_parent"
+    android:layout_height="48dp"
+    android:fillViewport="true"
+    android:scrollbars="none">
+
+    <LinearLayout
+      android:layout_width="wrap_content"
+      android:layout_height="match_parent"
+      android:gravity="center"
+      android:orientation="horizontal"
+      android:paddingHorizontal="8dp">
+
+      <Button android:id="@+id/btn_delete_selected" style="?android:attr/buttonStyleSmall" android:layout_width="wrap_content" android:layout_height="40dp" android:text="Delete" />
+      <Button android:id="@+id/btn_lock_selected" style="?android:attr/buttonStyleSmall" android:layout_width="wrap_content" android:layout_height="40dp" android:text="Lock" />
+      <Button android:id="@+id/btn_rotate_selected" style="?android:attr/buttonStyleSmall" android:layout_width="wrap_content" android:layout_height="40dp" android:text="Rotate 90°" />
+      <Button android:id="@+id/btn_reset_selected" style="?android:attr/buttonStyleSmall" android:layout_width="wrap_content" android:layout_height="40dp" android:text="Reset" />
+      <Button android:id="@+id/btn_layer_down" style="?android:attr/buttonStyleSmall" android:layout_width="wrap_content" android:layout_height="40dp" android:text="Send down" />
+      <Button android:id="@+id/btn_layer_up" style="?android:attr/buttonStyleSmall" android:layout_width="wrap_content" android:layout_height="40dp" android:text="Bring up" />
+      <Button android:id="@+id/btn_screen_fit" style="?android:attr/buttonStyleSmall" android:layout_width="wrap_content" android:layout_height="40dp" android:text="Aspect fit" />
+    </LinearLayout>
+  </HorizontalScrollView>
+
+  <HorizontalScrollView
+    android:layout_width="match_parent"
+    android:layout_height="76dp"
+    android:background="#08090A"
+    android:fillViewport="true"
+    android:scrollbars="none">
+
+    <LinearLayout
+      android:layout_width="wrap_content"
+      android:layout_height="match_parent"
+      android:gravity="center"
+      android:orientation="horizontal"
+      android:paddingHorizontal="8dp">
+
+      <TextView
+        android:id="@+id/btn_portrait_orientation"
+        android:layout_width="82dp"
+        android:layout_height="64dp"
+        android:background="@drawable/overlay_orientation_active"
+        android:drawableTop="@drawable/ic_screen_portrait"
+        android:drawablePadding="3dp"
+        android:gravity="center"
+        android:maxLines="1"
+        android:text="Portrait"
+        android:textColor="#00E676"
+        android:textSize="12sp"
+        android:textStyle="bold" />
+
+      <View android:layout_width="4dp" android:layout_height="1dp" />
+
+      <TextView
+        android:id="@+id/btn_landscape_orientation"
+        android:layout_width="82dp"
+        android:layout_height="64dp"
+        android:background="@drawable/overlay_orientation_inactive"
+        android:drawableTop="@drawable/ic_screen_landscape"
+        android:drawablePadding="3dp"
+        android:gravity="center"
+        android:maxLines="1"
+        android:text="Landscape"
+        android:textColor="#B8BDC7"
+        android:textSize="12sp" />
+
+      <View android:layout_width="8dp" android:layout_height="1dp" />
+
+      <Button android:id="@+id/btn_add_image" android:layout_width="wrap_content" android:layout_height="48dp" android:text="+ Image" />
+      <Button android:id="@+id/btn_add_text" android:layout_width="wrap_content" android:layout_height="48dp" android:text="+ Text" />
+      <Button android:id="@+id/btn_select_screen" android:layout_width="wrap_content" android:layout_height="48dp" android:text="Screen" />
+      <Button android:id="@+id/btn_show_layers" android:layout_width="wrap_content" android:layout_height="48dp" android:text="Layers" />
+      <Button android:id="@+id/btn_theme" android:layout_width="wrap_content" android:layout_height="48dp" android:text="Theme" />
+      <Button android:id="@+id/btn_grid" android:layout_width="wrap_content" android:layout_height="48dp" android:text="Grid" />
+      <Button android:id="@+id/btn_snap" android:layout_width="wrap_content" android:layout_height="48dp" android:text="Snap" />
+      <Button android:id="@+id/btn_fit_scene" android:layout_width="wrap_content" android:layout_height="48dp" android:text="Fit scene" />
+    </LinearLayout>
+  </HorizontalScrollView>
+</LinearLayout>

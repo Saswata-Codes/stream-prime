@@ -222,4 +222,27 @@
     <string name="accessibility_service_description">Enhanced screen capture and audio recording for live streaming</string>
     <string name="accessibility_permission_required">Accessibility permission is required for enhanced screen capture</string>
     <string name="accessibility_permission_guide">Please enable accessibility service in Settings > Accessibility > Installed services</string>
+    <string name="overlay_screen_edit_hint">One finger moves. Pinch zooms. Two-finger twist rotates.</string>
+    <string name="edit_screen">Edit Screen</string>
+    <string name="edit_layer">Edit Layer</string>
+    <string name="done_screen">Lock Screen</string>
+    <string name="rotate_screen">Rotate 90°</string>
+    <string name="reset_screen">Reset Screen</string>
+    <string name="screen_capture_placeholder">SCREEN CAPTURE</string>
+    <string name="portrait_app_screen">Portrait App</string>
+    <string name="landscape_app_screen">Landscape App</string>
+    <string name="portrait_screen_edit_hint">Portrait app layout: drag to move, pinch to zoom, twist to rotate.</string>
+    <string name="landscape_screen_edit_hint">Landscape app layout: drag to move, pinch to zoom, twist to rotate.</string>
+    <string name="portrait_screen_placeholder">PORTRAIT APP</string>
+    <string name="landscape_screen_placeholder">LANDSCAPE APP</string>
+    <string name="screen_preset_help">Vertical output switches automatically between these app layouts.</string>
+    <string name="rotate_selected_layer">Rotate Selected Layer 90°</string>
+    <string name="canvas_theme">Canvas Theme</string>
+    <string name="theme_value">Theme: %1$s</string>
+    <string name="grid_on">Grid: On</string>
+    <string name="grid_off">Grid: Off</string>
+    <string name="snap_on">Snap: On</string>
+    <string name="snap_off">Snap: Off</string>
+    <string name="fit_app">Fit App</string>
+    <string name="fill_canvas">Fill Canvas</string>
 </resources>

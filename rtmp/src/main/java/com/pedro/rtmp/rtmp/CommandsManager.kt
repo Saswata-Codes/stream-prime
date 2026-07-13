@@ -63,8 +63,10 @@ abstract class CommandsManager {
   protected var width = 640
   protected var height = 480
   var fps = 30
+  protected var videoBitrateKbps = 0.0
   protected var sampleRate = 44100
   protected var isStereo = true
+  protected var audioBitrateKbps = 0.0
   var videoCodec = VideoCodec.H264
   var audioCodec = AudioCodec.AAC
   //Avoid write a packet in middle of other.
@@ -75,9 +77,17 @@ abstract class CommandsManager {
     this.height = height
   }
 
+  fun setVideoBitrate(bitrateBps: Int) {
+    videoBitrateKbps = bitrateBps.coerceAtLeast(0) / 1000.0
+  }
+
   fun setAudioInfo(sampleRate: Int, isStereo: Boolean) {
     this.sampleRate = sampleRate
     this.isStereo = isStereo
+  }
+
+  fun setAudioBitrate(bitrateBps: Int) {
+    audioBitrateKbps = bitrateBps.coerceAtLeast(0) / 1000.0
   }
 
   fun setAuth(user: String?, password: String?) {

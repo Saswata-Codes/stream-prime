@@ -23,16 +23,19 @@ object LayerCanvasRenderer {
         canvasWidth: Float,
         canvasHeight: Float,
         context: Context,
-        layerBitmapCache: MutableMap<String, Bitmap?>
+        layerBitmapCache: MutableMap<String, Bitmap?>,
+        clearCanvas: Boolean = true
     ) {
         if (canvasWidth <= 0 || canvasHeight <= 0) return
 
-        // Clear the canvas with transparent background
-        canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+        if (clearCanvas) {
+            // Stream overlay bitmaps need transparency. Preview can retain its screen placeholder.
+            canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+        }
 
         // Draw each enabled layer in z-order
         layers
-            .filter { it.enabled && it.imageUri.isNotEmpty() }
+            .filter { it.enabled && (it.type == OverlayLayerType.TEXT || it.imageUri.isNotEmpty()) }
             .sortedBy { it.zIndex }
             .forEach { layer ->
                 renderSingleLayer(canvas, layer, canvasWidth, canvasHeight, context, layerBitmapCache)
@@ -52,6 +55,10 @@ object LayerCanvasRenderer {
         layerBitmapCache: MutableMap<String, Bitmap?>
     ) {
         try {
+            if (layer.type == OverlayLayerType.TEXT) {
+                renderTextLayer(canvas, layer, canvasWidth, canvasHeight)
+                return
+            }
             val layerBitmap = getOrLoadLayerBitmap(layer, context, layerBitmapCache) ?: return
             
             // Calculate layer position and desired box based on percentages
@@ -81,12 +88,37 @@ object LayerCanvasRenderer {
             // Destination rectangle using top-left anchor (no stretching)
             val destRect = RectF(layerX, layerY, layerX + drawW, layerY + drawH)
 
-            // Draw the layer bitmap directly on canvas preserving aspect ratio
+            // Rotate around the visible layer center, matching the editor preview.
+            val save = canvas.save()
+            canvas.rotate(layer.rotationDegrees, destRect.centerX(), destRect.centerY())
             canvas.drawBitmap(layerBitmap, null, destRect, paint)
+            canvas.restoreToCount(save)
             
         } catch (e: Exception) {
             // Silent fail to prevent crashes in either preview or stream
         }
+    }
+
+    private fun renderTextLayer(canvas: Canvas, layer: OverlayLayer, canvasWidth: Float, canvasHeight: Float) {
+        val left = layer.positionXPct / 100f * canvasWidth
+        val top = layer.positionYPct / 100f * canvasHeight
+        val width = layer.scaleXPct / 100f * canvasWidth
+        val height = layer.scaleYPct / 100f * canvasHeight
+        val rect = RectF(left, top, left + width, top + height)
+        val save = canvas.save()
+        canvas.rotate(layer.rotationDegrees, rect.centerX(), rect.centerY())
+        paint.alpha = (layer.alpha * 255).toInt()
+        paint.style = Paint.Style.FILL
+        paint.color = Color.parseColor(layer.backgroundColor)
+        canvas.drawRoundRect(rect, 8f, 8f, paint)
+        paint.color = Color.parseColor(layer.textColor)
+        paint.textAlign = Paint.Align.CENTER
+        paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        paint.textSize = (height * 0.55f).coerceAtLeast(12f)
+        val baseline = rect.centerY() - (paint.ascent() + paint.descent()) / 2f
+        canvas.drawText(layer.text, rect.centerX(), baseline, paint)
+        paint.textAlign = Paint.Align.LEFT
+        canvas.restoreToCount(save)
     }
     
     /**
