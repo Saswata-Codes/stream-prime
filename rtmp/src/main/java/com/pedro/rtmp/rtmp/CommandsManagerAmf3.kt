@@ -108,13 +108,13 @@ class CommandsManagerAmf3: CommandsManager() {
       //amfEcmaArray.setProperty("videocodecid", codecValue.toDouble())
       amfEcmaArray.setProperty("videocodecid", VideoFormat.AVC.value.toDouble())
       amfEcmaArray.setProperty("framerate", fps.toDouble())
-      amfEcmaArray.setProperty("videodatarate", 0.0)
+      amfEcmaArray.setProperty("videodatarate", videoBitrateKbps)
     }
     if (!audioDisabled) {
       amfEcmaArray.setProperty("audiocodecid", AudioFormat.AAC.value.toDouble())
       amfEcmaArray.setProperty("audiosamplerate", sampleRate.toDouble())
       amfEcmaArray.setProperty("audiosamplesize", 16.0)
-      amfEcmaArray.setProperty("audiodatarate", 0.0)
+      amfEcmaArray.setProperty("audiodatarate", audioBitrateKbps)
       amfEcmaArray.setProperty("stereo", isStereo)
     }
     amfEcmaArray.setProperty("filesize", 0.0)

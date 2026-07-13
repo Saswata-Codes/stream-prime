@@ -71,7 +71,7 @@ fun ByteBuffer.toByteArray(): ByteArray {
 fun ByteBuffer.removeInfo(info: MediaFrame.Info): ByteBuffer {
   try {
     position(info.offset)
-    limit(info.size)
+    limit(info.offset + info.size)
   } catch (ignored: Exception) { }
   return slice()
 }

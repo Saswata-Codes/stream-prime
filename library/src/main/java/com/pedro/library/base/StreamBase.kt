@@ -478,6 +478,10 @@ abstract class StreamBase(
 
   protected fun getVideoFps() = videoEncoder.fps
 
+  protected fun getVideoBitrate() = videoEncoder.bitRate
+
+  protected fun getAudioBitrate() = audioEncoder.bitRate
+
   private fun startSources() {
     if (!glInterface.isRunning) glInterface.start()
     if (!videoSource.isRunning()) {

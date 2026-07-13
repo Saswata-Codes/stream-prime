@@ -108,6 +108,10 @@ public class AudioEncoder extends BaseEncoder implements GetMicrophoneData {
     this.getFrame = getFrame;
   }
 
+  public int getBitRate() {
+    return bitRate;
+  }
+
   /**
    * Prepare encoder with default parameters
    */
