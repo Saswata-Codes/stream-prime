@@ -56,7 +56,7 @@
     <string name="rotation_mode">Advanced Mode</string>
     
     <!-- Legacy Strings (keeping for compatibility) -->
-    <string name="welcome_title">GameStream Pro</string>
+        <string name="welcome_title">Stream Prime</string>
     <string name="welcome_subtitle">Professional Mobile Game Streaming</string>
     <string name="tv_select">Select Streaming Mode</string>
     <string name="from_file">File Streaming</string>
