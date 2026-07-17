@@ -62,16 +62,16 @@
         android:value="true" />
     <meta-data
         android:name="android.app.uses_sdk"
-        android:value="36" />
+        android:value="37" />
     <meta-data
         android:name="android.app.target_sdk"
-        android:value="36" />
+        android:value="37" />
     <meta-data
         android:name="android.app.min_sdk"
-        android:value="21" />
+        android:value="28" />
     <meta-data
         android:name="android.app.compatible_sdk"
-        android:value="36" />
+        android:value="37" />
     <meta-data
         android:name="android.app.page_size_compatible"
         android:value="true" />
