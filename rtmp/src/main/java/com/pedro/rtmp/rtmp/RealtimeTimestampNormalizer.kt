@@ -4,13 +4,17 @@ import android.os.SystemClock
 import com.pedro.common.frame.MediaFrame
 
 /**
- * Keeps RTMP media timestamps on a real-time clock without blocking the sender thread.
+ * Keeps RTMP media timestamps on a real-time clock without damaging AAC cadence.
  *
- * Some hardware encoders return frames whose timestamps jump ahead of wall-clock time. Sending
- * those timestamps unchanged makes live endpoints interpret the upload as faster than real time.
- * Sleeping here is unsafe because audio and video share the same sender: a future video frame can
- * otherwise stall every audio packet behind it. Instead, timestamps are clamped independently for
- * audio and video while preserving their original timing whenever it is already real-time safe.
+ * Some hardware video encoders return frames whose timestamps jump ahead of wall-clock time.
+ * Sending those timestamps unchanged makes live endpoints interpret the upload as faster than
+ * real time, so video is clamped to the elapsed sender clock.
+ *
+ * AAC is different: encoders commonly emit two or more 1024-sample access units in one callback
+ * burst. Clamping each audio unit to the few microseconds spent processing that burst collapses
+ * their 21.3 ms spacing at 48 kHz. Receivers then play the burst too quickly, which is heard as
+ * crackling and gradually damages A/V sync. Audio therefore keeps the same zero-based timestamp
+ * cadence used by the recording muxer. Monotonic guards remain independent for each track.
  */
 internal class RealtimeTimestampNormalizer(
   private val nowUs: () -> Long = { SystemClock.elapsedRealtimeNanos() / 1_000L }
@@ -34,13 +38,16 @@ internal class RealtimeTimestampNormalizer(
 
     val sourceElapsedUs = (mediaTimestampUs - baseMedia).coerceAtLeast(0L)
     val realtimeElapsedUs = (now - baseRealtimeUs).coerceAtLeast(0L)
-    val realtimeSafeTimestampUs = sourceElapsedUs.coerceAtMost(realtimeElapsedUs)
+    val normalizedTimestampUs = when (type) {
+      MediaFrame.Type.AUDIO -> sourceElapsedUs
+      MediaFrame.Type.VIDEO -> sourceElapsedUs.coerceAtMost(realtimeElapsedUs)
+    }
 
     return when (type) {
-      MediaFrame.Type.AUDIO -> realtimeSafeTimestampUs.coerceAtLeast(lastAudioTimestampUs).also {
+      MediaFrame.Type.AUDIO -> normalizedTimestampUs.coerceAtLeast(lastAudioTimestampUs).also {
         lastAudioTimestampUs = it
       }
-      MediaFrame.Type.VIDEO -> realtimeSafeTimestampUs.coerceAtLeast(lastVideoTimestampUs).also {
+      MediaFrame.Type.VIDEO -> normalizedTimestampUs.coerceAtLeast(lastVideoTimestampUs).also {
         lastVideoTimestampUs = it
       }
     }

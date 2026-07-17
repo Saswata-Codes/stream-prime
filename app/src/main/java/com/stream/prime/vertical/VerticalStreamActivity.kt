@@ -18,9 +18,11 @@ package com.stream.prime.vertical
 
 import android.Manifest
 import android.app.AlertDialog
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
-import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
@@ -58,11 +60,23 @@ class VerticalStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolde
   private var action = Action.STREAM
   private val serviceStateHandler = Handler(Looper.getMainLooper())
   private var serviceStateSyncAttempt = 0
+  private var recordingStateReceiverRegistered = false
+  private val recordingStateReceiver = object : BroadcastReceiver() {
+    override fun onReceive(context: Context?, intent: Intent?) {
+      if (intent?.action != ScreenService.ACTION_RECORDING_STATE_CHANGED) return
+      updateRecordButtonState(intent.getBooleanExtra(ScreenService.EXTRA_IS_RECORDING, false))
+    }
+  }
   private val serviceStateSync = object : Runnable {
     override fun run() {
       if (isFinishing || isDestroyed) return
       val service = ScreenService.INSTANCE
       if (service == null) {
+        // Notification Stop can happen while this receiver is unregistered in the background.
+        // No capture service means recording is stopped, so never retain the previous STOP icon.
+        updateStreamButtonState()
+        updateRecordButtonState(false)
+        updateStatus("disconnected")
         if (serviceStateSyncAttempt++ < SERVICE_STATE_SYNC_ATTEMPTS) {
           serviceStateHandler.postDelayed(this, SERVICE_STATE_SYNC_DELAY_MS)
         }
@@ -79,24 +93,20 @@ class VerticalStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolde
       if (result.resultCode == RESULT_OK) {
           val data = result.data
           if (data != null) {
-              val service = ScreenService.INSTANCE
-              if (service != null) {
-                  // Set rotation to 90 degrees for vertical streaming BEFORE preparing stream
+              val requestedAction = action
+              ScreenService.startCapture(this, result.resultCode, data) { prepared ->
+                val service = ScreenService.INSTANCE
+                if (prepared && service != null) {
                   service.setRotation(90)
                   service.setCallback(this)
-                  
-                  // Prepare the stream with the permission result
-                  if (service.prepareStream(result.resultCode, data)) {
-                      serviceStarted = true
-                      when (action) {
-                          Action.STREAM -> startStream()
-                          Action.RECORD -> startRecord()
-                      }
-                  } else {
-                      toast("Failed to prepare screen capture")
+                  serviceStarted = true
+                  when (requestedAction) {
+                    Action.STREAM -> startStream()
+                    Action.RECORD -> startRecord()
                   }
-              } else {
-                  toast("Screen service not available")
+                } else {
+                  toast("Failed to prepare screen capture")
+                }
               }
           } else {
               toast("Screen capture permission denied")
@@ -124,11 +134,6 @@ class VerticalStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolde
     initializeViews()
     setupClickListeners()
     
-    // Start ScreenService if not already started and permissions are granted
-    if (checkAudioPermission()) {
-      startService(Intent(this, ScreenService::class.java))
-    }
-    
     // Only check audio permission on startup, not screen capture
     checkAudioPermission()
   }
@@ -138,6 +143,27 @@ class VerticalStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolde
       // Reload quality settings when returning from Stream Settings
       ScreenService.INSTANCE?.reloadQualitySettings()
       scheduleServiceStateSync()
+  }
+
+  override fun onStart() {
+    super.onStart()
+    if (!recordingStateReceiverRegistered) {
+      ContextCompat.registerReceiver(
+        this,
+        recordingStateReceiver,
+        IntentFilter(ScreenService.ACTION_RECORDING_STATE_CHANGED),
+        ContextCompat.RECEIVER_NOT_EXPORTED
+      )
+      recordingStateReceiverRegistered = true
+    }
+  }
+
+  override fun onStop() {
+    if (recordingStateReceiverRegistered) {
+      unregisterReceiver(recordingStateReceiver)
+      recordingStateReceiverRegistered = false
+    }
+    super.onStop()
   }
 
   override fun onPause() {
@@ -182,31 +208,13 @@ class VerticalStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolde
 
   private fun startServiceIfPermissionsGrantedForStream() {
     if (checkAudioPermission()) {
-      // Ensure ScreenService is initialized
-      if (ScreenService.INSTANCE == null) {
-        startService(Intent(this, ScreenService::class.java))
-        // Small delay to ensure service is initialized
-        Handler(Looper.getMainLooper()).postDelayed({
-          setupStreamButton()
-        }, 500)
-      } else {
-        setupStreamButton()
-      }
+      setupStreamButton()
     }
   }
 
   private fun startServiceIfPermissionsGrantedForRecord() {
     if (checkAudioPermission()) {
-      // Ensure ScreenService is initialized
-      if (ScreenService.INSTANCE == null) {
-        startService(Intent(this, ScreenService::class.java))
-        // Small delay to ensure service is initialized
-        Handler(Looper.getMainLooper()).postDelayed({
-          setupRecordButton()
-        }, 500)
-      } else {
-        setupRecordButton()
-      }
+      setupRecordButton()
     }
   }
 
@@ -223,8 +231,8 @@ class VerticalStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolde
     }
   }
 
-  private fun updateRecordButtonState() {
-    if (ScreenService.INSTANCE?.isRecording() == true) {
+  private fun updateRecordButtonState(recordingOverride: Boolean? = null) {
+    if (recordingOverride ?: (ScreenService.INSTANCE?.isRecording() == true)) {
       bRecord.setIcon(ContextCompat.getDrawable(this, R.drawable.stop_icon))
       bRecord.text = "STOP"
     } else {
@@ -239,12 +247,15 @@ class VerticalStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolde
       service.setCallback(this)
       if (!service.isStreaming() && !service.isRecording()) {
         action = Action.STREAM
-        activityResultContract.launch(service.sendIntent())
+        activityResultContract.launch(ScreenService.createCaptureIntent(this))
       } else if (!service.isStreaming()) {
         startStream()
       } else {
         stopStream()
       }
+    } else {
+      action = Action.STREAM
+      activityResultContract.launch(ScreenService.createCaptureIntent(this))
     }
     updateStreamButtonState()
   }
@@ -255,8 +266,11 @@ class VerticalStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolde
       service.setCallback(this)
       if (!service.isStreaming() && !service.isRecording()) {
         action = Action.RECORD
-        activityResultContract.launch(service.sendIntent())
+        activityResultContract.launch(ScreenService.createCaptureIntent(this))
       } else toggleRecord()
+    } else {
+      action = Action.RECORD
+      activityResultContract.launch(ScreenService.createCaptureIntent(this))
     }
   }
 

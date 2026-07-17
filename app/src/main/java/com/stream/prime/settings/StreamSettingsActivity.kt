@@ -1,6 +1,11 @@
 package com.stream.prime.settings
 
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
 import android.view.View
 import android.widget.ArrayAdapter
@@ -15,6 +20,11 @@ import com.stream.prime.R
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import android.widget.ImageView
+import androidx.appcompat.app.AlertDialog
+import androidx.core.content.ContextCompat
+import com.google.android.material.materialswitch.MaterialSwitch
+import com.stream.prime.accessibility.StreamAccessibilityService
+import com.stream.prime.screen.ScreenService
 
 class StreamSettingsActivity : AppCompatActivity(), SettingsManager.SettingsChangeListener {
     
@@ -35,10 +45,14 @@ class StreamSettingsActivity : AppCompatActivity(), SettingsManager.SettingsChan
     private lateinit var btnReset: Button
     private lateinit var btnBack: View
     private lateinit var btnHeaderSave: ImageView
+    private lateinit var switchVoiceChatCompatibility: MaterialSwitch
+    private lateinit var voiceChatCompatibilityStatus: TextView
+    private lateinit var btnAccessibilitySettings: Button
     
     // State Management
     private var isUpdatingUI = false
     private var isSavingSettings = false
+    private var isUpdatingCompatibilityUI = false
     
     // Settings Data
     private var currentStreamingMode = "Landscape"
@@ -91,6 +105,50 @@ class StreamSettingsActivity : AppCompatActivity(), SettingsManager.SettingsChan
         SettingsManager.removeListener(this)
         Log.d(TAG, "=== SETTINGS ACTIVITY DESTROYED ===")
     }
+
+    override fun onResume() {
+        super.onResume()
+        val compatibilityEnabled = reconcileVoiceChatCompatibilityWithAccessibility()
+        val captureActive = ScreenService.INSTANCE?.let {
+            it.isStreaming() || it.isRecording()
+        } == true
+        if (captureActive && compatibilityEnabled) {
+            val overlayWasVisible =
+                StreamAccessibilityService.isCompatibilityOverlayVisible(this)
+            val activated = StreamAccessibilityService.setCaptureActive(this, true)
+            if (activated && !overlayWasVisible) {
+                ScreenService.INSTANCE?.refreshGameVoiceChatCompatibilityMode()
+            }
+        }
+        if (compatibilityEnabled) maybeOfferBackgroundProtection()
+        updateVoiceChatCompatibilityUI()
+    }
+
+    /**
+     * Accessibility can be disabled outside Stream Prime while the saved compatibility switch is
+     * still true. Make the switch truthful as soon as this screen resumes. The next user attempt
+     * to turn it on follows the normal disclosure and opens Accessibility Settings again.
+     */
+    private fun reconcileVoiceChatCompatibilityWithAccessibility(): Boolean {
+        val requestedEnabled = SettingsManager.isGameVoiceChatCompatibilityEnabled(this)
+        val state = VoiceChatCompatibilityPolicy.resolve(
+            requestedEnabled = requestedEnabled,
+            accessibilityEnabled = StreamAccessibilityService.isEnabled(this),
+            accessibilityConnected = StreamAccessibilityService.isConnected(this)
+        )
+        if (requestedEnabled && !state.enabled) {
+            Log.w(TAG, "Mic Share is disconnected; automatically disabling compatibility mode")
+            SettingsManager.setGameVoiceChatCompatibilityEnabled(this, false)
+            StreamAccessibilityService.setCaptureActive(this, false)
+            ScreenService.INSTANCE?.refreshGameVoiceChatCompatibilityMode()
+            android.widget.Toast.makeText(
+                this,
+                R.string.game_voice_chat_compatibility_auto_disabled,
+                android.widget.Toast.LENGTH_SHORT
+            ).show()
+        }
+        return state.enabled
+    }
     
     override fun onSettingsChanged() {
         Log.d(TAG, "Settings changed notification received")
@@ -101,6 +159,7 @@ class StreamSettingsActivity : AppCompatActivity(), SettingsManager.SettingsChan
             runOnUiThread {
                 loadSettingsFromStorage()
                 updateUI()
+                updateVoiceChatCompatibilityUI()
             }
         } else {
             Log.d(TAG, "Skipping UI update - currently saving settings")
@@ -122,6 +181,9 @@ class StreamSettingsActivity : AppCompatActivity(), SettingsManager.SettingsChan
         btnReset = findViewById(R.id.btn_reset)
         btnBack = findViewById(R.id.btn_back)
         btnHeaderSave = findViewById(R.id.btn_save)
+        switchVoiceChatCompatibility = findViewById(R.id.switch_voice_chat_compatibility)
+        voiceChatCompatibilityStatus = findViewById(R.id.tv_voice_chat_compatibility_status)
+        btnAccessibilitySettings = findViewById(R.id.btn_accessibility_settings)
     }
     
     private fun setupSpinners() {
@@ -166,6 +228,127 @@ class StreamSettingsActivity : AppCompatActivity(), SettingsManager.SettingsChan
         btnReset.setOnClickListener {
             Log.d(TAG, "Reset button clicked")
             showResetConfirmationDialog()
+        }
+
+
+        switchVoiceChatCompatibility.setOnCheckedChangeListener { _, enabled ->
+            if (isUpdatingCompatibilityUI) return@setOnCheckedChangeListener
+            if (enabled) {
+                showVoiceChatCompatibilityDisclosure()
+            } else {
+                SettingsManager.setGameVoiceChatCompatibilityEnabled(this, false)
+                StreamAccessibilityService.setCaptureActive(this, false)
+                ScreenService.INSTANCE?.refreshGameVoiceChatCompatibilityMode()
+                updateVoiceChatCompatibilityUI()
+            }
+        }
+
+        btnAccessibilitySettings.setOnClickListener {
+            openAccessibilitySettings()
+        }
+    }
+
+    private fun showVoiceChatCompatibilityDisclosure() {
+        AlertDialog.Builder(this)
+            .setTitle(R.string.game_voice_chat_compatibility_title)
+            .setMessage(R.string.game_voice_chat_compatibility_warning)
+            .setPositiveButton(R.string.enable_compatibility_mode) { _, _ ->
+                val state = VoiceChatCompatibilityPolicy.resolve(
+                    requestedEnabled = true,
+                    accessibilityEnabled = StreamAccessibilityService.isEnabled(this),
+                    accessibilityConnected = StreamAccessibilityService.isConnected(this)
+                )
+                // Save the request while Android's Settings screen is open. onResume() keeps it
+                // only if Mic Share was actually enabled; otherwise it automatically turns off.
+                SettingsManager.setGameVoiceChatCompatibilityEnabled(this, true)
+                updateVoiceChatCompatibilityUI()
+                if (state.shouldOpenAccessibilitySettings) {
+                    openAccessibilitySettings()
+                } else {
+                    ScreenService.INSTANCE?.refreshGameVoiceChatCompatibilityMode()
+                }
+            }
+            .setNegativeButton(R.string.cancel) { _, _ ->
+                updateVoiceChatCompatibilityUI()
+            }
+            .setOnCancelListener { updateVoiceChatCompatibilityUI() }
+            .show()
+    }
+
+    private fun openAccessibilitySettings() {
+        runCatching {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }.onFailure {
+            Log.e(TAG, "Unable to open Accessibility settings", it)
+        }
+    }
+
+    /**
+     * Accessibility improves process priority but cannot override Doze or vendor battery policy.
+     * Ask once for Android's standard unrestricted-battery exemption after the user has explicitly
+     * enabled the sideload compatibility mode.
+     */
+    private fun maybeOfferBackgroundProtection() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
+        if (!StreamAccessibilityService.isEnabled(this)) return
+        if (SettingsManager.wasBackgroundProtectionPrompted(this)) return
+
+        val powerManager = getSystemService(PowerManager::class.java)
+        if (powerManager.isIgnoringBatteryOptimizations(packageName)) return
+
+        SettingsManager.markBackgroundProtectionPrompted(this)
+        AlertDialog.Builder(this)
+            .setTitle(R.string.background_protection_title)
+            .setMessage(R.string.background_protection_message)
+            .setPositiveButton(R.string.allow_unrestricted_battery) { _, _ ->
+                openBatteryProtectionSettings()
+            }
+            .setNegativeButton(R.string.not_now, null)
+            .show()
+    }
+
+    private fun openBatteryProtectionSettings() {
+        val packageUri = Uri.parse("package:$packageName")
+        runCatching {
+            startActivity(
+                Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, packageUri)
+            )
+        }.recoverCatching {
+            startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+        }.onFailure {
+            Log.e(TAG, "Unable to open battery optimization settings", it)
+        }
+    }
+
+    private fun updateVoiceChatCompatibilityUI() {
+        if (!::switchVoiceChatCompatibility.isInitialized) return
+
+        isUpdatingCompatibilityUI = true
+        try {
+            val enabled = SettingsManager.isGameVoiceChatCompatibilityEnabled(this)
+            val accessibilityEnabled = StreamAccessibilityService.isEnabled(this)
+            val overlayVisible = StreamAccessibilityService.isCompatibilityOverlayVisible(this)
+            switchVoiceChatCompatibility.isChecked = enabled
+            btnAccessibilitySettings.visibility =
+                if (enabled && !accessibilityEnabled) View.VISIBLE else View.GONE
+
+            voiceChatCompatibilityStatus.setText(
+                when {
+                    !enabled -> R.string.game_voice_chat_compatibility_disabled
+                    !accessibilityEnabled -> R.string.game_voice_chat_compatibility_permission_needed
+                    overlayVisible -> R.string.game_voice_chat_compatibility_active
+                    else -> R.string.game_voice_chat_compatibility_ready
+                }
+            )
+            voiceChatCompatibilityStatus.setTextColor(
+                ContextCompat.getColor(
+                    this,
+                    if (enabled && accessibilityEnabled) R.color.prism_neon_green
+                    else R.color.prism_text_secondary
+                )
+            )
+        } finally {
+            isUpdatingCompatibilityUI = false
         }
     }
     
@@ -600,8 +783,11 @@ class StreamSettingsActivity : AppCompatActivity(), SettingsManager.SettingsChan
         Log.d(TAG, "=== RESETTING TO DEFAULTS ===")
         
         SettingsManager.resetToDefaults(this)
+        StreamAccessibilityService.setCaptureActive(this, false)
+        ScreenService.INSTANCE?.refreshGameVoiceChatCompatibilityMode()
         loadSettingsFromStorage()
         updateUI()
+        updateVoiceChatCompatibilityUI()
         
         android.widget.Toast.makeText(this, "Settings reset to defaults", android.widget.Toast.LENGTH_SHORT).show()
     }

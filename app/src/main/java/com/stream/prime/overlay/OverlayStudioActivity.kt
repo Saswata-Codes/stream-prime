@@ -43,11 +43,18 @@ class OverlayStudioActivity : AppCompatActivity() {
       contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     val config = canvas.getConfig()
+    val animated = OverlayManager.isAnimatedImage(this, uri.toString())
+    if (animated && !OverlayMediaDetector.isSupportedGifSize(OverlayManager.imageFileSize(this, uri))) {
+      Toast.makeText(this, "GIF is too large. Use a GIF smaller than 20 MB.", Toast.LENGTH_LONG).show()
+      return@registerForActivityResult
+    }
+    val mediaLabel = if (animated) "GIF" else "Image"
     val layer = OverlayLayer(
       id = OverlayManager.generateLayerId(),
-      name = "Image ${config.layers.count { it.type != OverlayLayerType.TEXT } + 1}",
+      name = "$mediaLabel ${config.layers.count { it.type != OverlayLayerType.TEXT } + 1}",
       type = OverlayLayerType.IMAGE,
       imageUri = uri.toString(),
+      animated = animated,
       positionXPct = 15f,
       positionYPct = 15f,
       scaleXPct = 45f,
@@ -57,6 +64,7 @@ class OverlayStudioActivity : AppCompatActivity() {
     canvas.setConfig(config.copy(layers = config.layers + layer))
     canvas.selectLayer(layer.id)
     markDirty()
+    if (animated) Toast.makeText(this, "Animated GIF added", Toast.LENGTH_SHORT).show()
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -82,13 +90,14 @@ class OverlayStudioActivity : AppCompatActivity() {
     landscapeButton = findViewById(R.id.btn_landscape_orientation)
 
     nameView.text = project.name
-    // Disabled projects remain fully editable; visibility is controlled by the library switch.
-    canvas.setConfig(project.config)
     val vertical = SettingsManager.getStreamingMode(this) == "Vertical"
     canvas.setCanvasSize(
       if (vertical) SettingsManager.getVerticalWidth(this) else SettingsManager.getLandscapeWidth(this),
       if (vertical) SettingsManager.getVerticalHeight(this) else SettingsManager.getLandscapeHeight(this)
     )
+    // Disabled projects remain fully editable; visibility is controlled by the library switch.
+    // Set the output shape first so the initial frame is drawn against the correct canvas.
+    canvas.setConfig(project.config)
     canvas.setOnConfigChanged { _, _ -> markDirty() }
     canvas.setOnSelectionChanged { updateSelectionUi(it) }
 
@@ -225,7 +234,7 @@ class OverlayStudioActivity : AppCompatActivity() {
         StudioStackItem(
           id,
           layer.name,
-          "${if (layer.type == OverlayLayerType.TEXT) "Text" else "Image"} · ${if (layer.enabled) "Visible" else "Hidden"}",
+          "${when { layer.type == OverlayLayerType.TEXT -> "Text"; layer.animated -> "GIF"; else -> "Image" }} · ${if (layer.enabled) "Visible" else "Hidden"}",
           layer.locked
         )
       }
@@ -324,7 +333,7 @@ class OverlayStudioActivity : AppCompatActivity() {
 
   private fun applyLiveOverlay() {
     runCatching {
-      startService(Intent(this, ScreenService::class.java).apply { action = ACTION_APPLY_OVERLAY })
+      ScreenService.INSTANCE?.applyConfiguredOverlay()
     }
   }
 

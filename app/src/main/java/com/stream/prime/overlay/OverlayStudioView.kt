@@ -26,7 +26,12 @@ class OverlayStudioView @JvmOverloads constructor(
   private var streamWidth = 720
   private var streamHeight = 1280
   private var captureLandscapeAspect = CaptureDisplayAspect.landscapeAspect(context)
-  private val cache = mutableMapOf<String, Bitmap?>()
+  private val assetCache = OverlayAssetCache()
+  private var animationInvalidationScheduled = false
+  private val animationInvalidation = Runnable {
+    animationInvalidationScheduled = false
+    invalidate()
+  }
   private var onChanged: ((OverlayConfig, Boolean) -> Unit)? = null
   private var onSelectionChanged: ((StudioSelection) -> Unit)? = null
   private var lastX = 0f
@@ -64,7 +69,11 @@ class OverlayStudioView @JvmOverloads constructor(
     }
   })
 
-  fun setConfig(value: OverlayConfig) { config = value; invalidate() }
+  fun setConfig(value: OverlayConfig) {
+    config = value
+    assetCache.retainLayerIds(value.layers.mapTo(mutableSetOf()) { it.id })
+    invalidate()
+  }
   fun getConfig(): OverlayConfig = config
   fun setCanvasSize(width: Int, height: Int) { if (width > 0 && height > 0) { streamWidth = width; streamHeight = height; invalidate() } }
   fun setOnConfigChanged(listener: ((OverlayConfig, Boolean) -> Unit)?) { onChanged = listener }
@@ -255,14 +264,34 @@ class OverlayStudioView @JvmOverloads constructor(
     canvas.clipRect(viewport)
     canvas.translate(viewport.left, viewport.top)
     val (belowScreen, aboveScreen) = OverlayLayerOrdering.splitAtScreen(config.layers, config.screenLayerPosition)
-    LayerCanvasRenderer.renderLayersOnCanvas(canvas, belowScreen, viewport.width(), viewport.height(), context, cache, false)
+    val frameTimeMs = android.os.SystemClock.uptimeMillis()
+    val belowResult = LayerCanvasRenderer.renderLayersOnCanvas(
+      canvas,
+      belowScreen,
+      viewport.width(),
+      viewport.height(),
+      context,
+      assetCache,
+      false,
+      frameTimeMs
+    )
     drawScreen(canvas, viewport.width(), viewport.height())
-    LayerCanvasRenderer.renderLayersOnCanvas(canvas, aboveScreen, viewport.width(), viewport.height(), context, cache, false)
+    val aboveResult = LayerCanvasRenderer.renderLayersOnCanvas(
+      canvas,
+      aboveScreen,
+      viewport.width(),
+      viewport.height(),
+      context,
+      assetCache,
+      false,
+      frameTimeMs
+    )
     if (config.showGrid) drawGrid(canvas, viewport.width(), viewport.height())
     drawSelection(canvas, viewport.width(), viewport.height())
     if (guideX) canvas.drawLine(viewport.width() / 2f, 0f, viewport.width() / 2f, viewport.height(), selectedPaint)
     if (guideY) canvas.drawLine(0f, viewport.height() / 2f, viewport.width(), viewport.height() / 2f, selectedPaint)
     canvas.restoreToCount(save)
+    updateAnimationInvalidation(belowResult.hasAnimatedLayers || aboveResult.hasAnimatedLayers)
   }
 
   private fun drawScreen(canvas: Canvas, width: Float, height: Float) {
@@ -385,7 +414,11 @@ class OverlayStudioView @JvmOverloads constructor(
     }
   }
 
-  private fun emitChanged(finished: Boolean) { invalidate(); onChanged?.invoke(config, finished) }
+  private fun emitChanged(finished: Boolean) {
+    assetCache.retainLayerIds(config.layers.mapTo(mutableSetOf()) { it.id })
+    invalidate()
+    onChanged?.invoke(config, finished)
+  }
   private fun setSelection(value: StudioSelection) { selection = value; invalidate(); onSelectionChanged?.invoke(value) }
   private fun selectedLayer(): OverlayLayer? = config.layers.firstOrNull { it.id == selection.layerId }
   private fun stackItemLocked(id: String): Boolean = if (id == OverlayLayerOrdering.SCREEN_ID) activeScreenLocked() else config.layers.firstOrNull { it.id == id }?.locked == true
@@ -405,10 +438,8 @@ class OverlayStudioView @JvmOverloads constructor(
         layer.positionYPct + layer.scaleYPct
       )
     }
-    val cacheKey = "${layer.id}::${layer.imageUri}"
-    if (!cache.containsKey(cacheKey)) cache[cacheKey] = OverlayManager.decodeBitmap(context, layer.imageUri)
-    val bitmap = cache[cacheKey]
-    if (bitmap == null || bitmap.width <= 0 || bitmap.height <= 0) {
+    val dimensions = assetCache.dimensions(context, layer)
+    if (dimensions == null || dimensions.first <= 0 || dimensions.second <= 0) {
       return SceneBounds(
         layer.positionXPct,
         layer.positionYPct,
@@ -416,9 +447,9 @@ class OverlayStudioView @JvmOverloads constructor(
         layer.positionYPct + layer.scaleYPct
       )
     }
-    val scale = minOf(layer.scaleXPct / bitmap.width, layer.scaleYPct / bitmap.height)
-    val visibleWidth = bitmap.width * scale
-    val visibleHeight = bitmap.height * scale
+    val scale = minOf(layer.scaleXPct / dimensions.first, layer.scaleYPct / dimensions.second)
+    val visibleWidth = dimensions.first * scale
+    val visibleHeight = dimensions.second * scale
     return SceneBounds(
       layer.positionXPct,
       layer.positionYPct,
@@ -432,6 +463,22 @@ class OverlayStudioView @JvmOverloads constructor(
   private fun shortAngle(value:Float):Float { var d=value; while(d>180)d-=360; while(d< -180)d+=360; return d }
   private fun normalizeRotation(v:Float)=((v+180f)%360f+360f)%360f-180f
   private fun density(v:Float)=v*resources.displayMetrics.density
+  private fun updateAnimationInvalidation(hasAnimatedLayers: Boolean) {
+    if (hasAnimatedLayers) {
+      if (!animationInvalidationScheduled && isAttachedToWindow && visibility == VISIBLE) {
+        animationInvalidationScheduled = true
+        postDelayed(animationInvalidation, OVERLAY_ANIMATION_FRAME_INTERVAL_MS)
+      }
+    } else if (animationInvalidationScheduled) {
+      removeCallbacks(animationInvalidation)
+      animationInvalidationScheduled = false
+    }
+  }
   override fun performClick():Boolean { super.performClick(); return true }
-  override fun onDetachedFromWindow(){super.onDetachedFromWindow();LayerCanvasRenderer.clearBitmapCache(cache)}
+  override fun onDetachedFromWindow(){
+    removeCallbacks(animationInvalidation)
+    animationInvalidationScheduled = false
+    LayerCanvasRenderer.clearAssetCache(assetCache)
+    super.onDetachedFromWindow()
+  }
 }

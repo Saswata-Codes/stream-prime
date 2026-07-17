@@ -72,18 +72,22 @@ class AacPacket: BasePacket() {
       else -> AudioSoundRate.SR_44_1K
     }
     header[0] = type or (audioSize.value shl 1).toByte() or (soundRate.value shl 2).toByte() or (AudioFormat.AAC.value shl 4).toByte()
-    val buffer: ByteArray
     if (!configSend) {
       val config = AudioSpecificConfig(objectType.value, sampleRate, if (isStereo) 2 else 1)
-      buffer = ByteArray(config.size + header.size)
+      val configBuffer = ByteArray(config.size + header.size)
       header[1] = Type.SEQUENCE.mark
-      config.write(buffer, header.size)
+      config.write(configBuffer, header.size)
+      System.arraycopy(header, 0, configBuffer, 0, header.size)
       configSend = true
-    } else {
-      header[1] = Type.RAW.mark
-      buffer = ByteArray(fixedBuffer.remaining() + header.size)
-      fixedBuffer.get(buffer, header.size, fixedBuffer.remaining())
+      val ts = mediaFrame.info.timestamp / 1000
+      callback(FlvPacket(configBuffer, ts, configBuffer.size, FlvType.AUDIO))
     }
+
+    // The first encoded AAC access unit is media, not codec configuration. Send the sequence
+    // header immediately before it instead of discarding the first 1024 samples of every stream.
+    header[1] = Type.RAW.mark
+    val buffer = ByteArray(fixedBuffer.remaining() + header.size)
+    fixedBuffer.get(buffer, header.size, fixedBuffer.remaining())
     System.arraycopy(header, 0, buffer, 0, header.size)
     val ts = mediaFrame.info.timestamp / 1000
     callback(FlvPacket(buffer, ts, buffer.size, FlvType.AUDIO))

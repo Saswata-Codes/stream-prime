@@ -62,7 +62,7 @@
     <string name="from_file">File Streaming</string>
     <string name="rotation_rtmp">Advanced Streaming</string>
     <string name="old_api">Classic Mode</string>
-    <string name="version">v2.0</string>
+    <string name="version">v3.0</string>
     <string name="version_format">v%1$s</string>
     
     <!-- Quality Options -->
@@ -220,9 +220,24 @@
     <string name="settings_description">Configure video, audio, and streaming parameters</string>
     <string name="mute">Mute</string>
     <string name="accessibility_service_label">Stream Prime</string>
-    <string name="accessibility_service_description">Enhanced screen capture and audio recording for live streaming</string>
-    <string name="accessibility_permission_required">Accessibility permission is required for enhanced screen capture</string>
-    <string name="accessibility_permission_guide">Please enable accessibility service in Settings > Accessibility > Installed services</string>
+    <string name="accessibility_service_description">Optional mode that lets Stream Prime keep microphone capture while a game is using voice chat and helps protect an active stream or recording from background cleanup. It does not read or control screen content.</string>
+    <string name="accessibility_permission_required">Enable Stream Prime in Accessibility settings</string>
+    <string name="accessibility_permission_guide">Open Accessibility settings, select Stream Prime, and turn it on.</string>
+    <string name="game_voice_chat_compatibility_title">Game voice-chat microphone</string>
+    <string name="game_voice_chat_compatibility_summary">This option is for recording your microphone while a game is using voice chat.</string>
+    <string name="game_voice_chat_compatibility_warning">This mode uses Android Accessibility to give Stream Prime microphone-sharing priority and to hold a priority binding only while you are streaming or recording. Its active state is shown in the permanent notification. Stream Prime does not read or control the game interface. Voice-chat audio from other players may still be blocked by the game.</string>
+    <string name="game_voice_chat_compatibility_disabled">Off — normal Android microphone rules apply</string>
+    <string name="game_voice_chat_compatibility_permission_needed">Permission needed — enable Stream Prime in Accessibility</string>
+    <string name="game_voice_chat_compatibility_auto_disabled">Mic Share is off. Voice Chat Compatibility was disabled.</string>
+    <string name="game_voice_chat_compatibility_ready">Ready — Make sure your headphones are connected to use in-game voice chat while streaming or recording.</string>
+    <string name="game_voice_chat_compatibility_active">Active — Make sure your headphones are connected to use in-game voice chat while streaming or recording.</string>
+    <string name="open_accessibility_settings">Open Accessibility settings</string>
+    <string name="background_protection_title">Keep active capture running</string>
+    <string name="background_protection_message">Allow unrestricted battery use so Android is less likely to stop an ongoing stream or recording when Stream Prime is in the background. Some phones may also require Background activity or Auto-launch to be enabled in the phone’s app settings.</string>
+    <string name="allow_unrestricted_battery">Allow unrestricted battery</string>
+    <string name="not_now">Not now</string>
+    <string name="enable_compatibility_mode">Enable compatibility mode</string>
+    <string name="mic_share_not_ready">Game voice-chat compatibility is enabled, but Stream Prime is not active. Enable it in Accessibility settings and try again.</string>
     <string name="overlay_screen_edit_hint">One finger moves. Pinch zooms. Two-finger twist rotates.</string>
     <string name="edit_screen">Edit Screen</string>
     <string name="edit_layer">Edit Layer</string>

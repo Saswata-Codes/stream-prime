@@ -27,7 +27,6 @@ import com.pedro.encoder.Frame
 import com.pedro.encoder.input.audio.CustomAudioEffect
 import com.pedro.encoder.input.audio.GetMicrophoneData
 import com.pedro.encoder.input.audio.MicrophoneManager
-import com.pedro.encoder.input.sources.MediaProjectionHandler
 
 /**
  * Created by pedro on 12/1/24.
@@ -36,26 +35,23 @@ typealias InternalSource = InternalAudioSource
 
 @RequiresApi(Build.VERSION_CODES.Q)
 class InternalAudioSource(
-  mediaProjection: MediaProjection,
+  private val mediaProjection: MediaProjection,
   mediaProjectionCallback: MediaProjection.Callback? = null,
 ): AudioSource(), GetMicrophoneData {
 
   private val TAG = "InternalAudioSource"
   private val microphone = MicrophoneManager(this)
   private var handlerThread = HandlerThread(TAG)
-  private val mediaProjectionCallback = mediaProjectionCallback ?: object : MediaProjection.Callback() {}
-
-  init {
-    MediaProjectionHandler.mediaProjection = mediaProjection
+  private val mediaProjectionCallback = mediaProjectionCallback ?: object : MediaProjection.Callback() {
+    override fun onStop() {
+      stop()
+    }
   }
 
   override fun create(sampleRate: Int, isStereo: Boolean, echoCanceler: Boolean, noiseSuppressor: Boolean): Boolean {
-    //create microphone to confirm valid parameters
-    val result = microphone.createMicrophone(sampleRate, isStereo, echoCanceler, noiseSuppressor)
-    if (!result) {
-      throw IllegalArgumentException("Some parameters specified are not valid");
-    }
-    return true
+    // Defer AudioRecord allocation until start(), when the capture configuration exists. Creating
+    // a regular microphone here left an unused record/effect allocated for internal-only capture.
+    return sampleRate > 0
   }
 
   override fun start(getMicrophoneData: GetMicrophoneData) {
@@ -64,15 +60,18 @@ class InternalAudioSource(
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
         handlerThread = HandlerThread(TAG)
         handlerThread.start()
-        MediaProjectionHandler.mediaProjection?.registerCallback(mediaProjectionCallback, Handler(handlerThread.looper))
-        val config = AudioPlaybackCaptureConfiguration.Builder(MediaProjectionHandler.mediaProjection!!)
+        mediaProjection.registerCallback(mediaProjectionCallback, Handler(handlerThread.looper))
+        val config = AudioPlaybackCaptureConfiguration.Builder(mediaProjection)
           .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
           .addMatchingUsage(AudioAttributes.USAGE_GAME)
           .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN).build()
         try {
           val result = microphone.createInternalMicrophone(config, sampleRate, isStereo,
             echoCanceler, noiseSuppressor)
-          if (!result) throw IllegalArgumentException("Failed to create internal audio source")
+          if (!result) {
+            microphone.stop()
+            throw IllegalArgumentException("Failed to create internal audio source")
+          }
         } catch (e: UnsupportedOperationException) {
           throw IllegalArgumentException("invalid MediaProjection used")
         }
@@ -94,7 +93,7 @@ class InternalAudioSource(
   override fun isRunning(): Boolean = microphone.isRunning
 
   override fun release() {
-    MediaProjectionHandler.mediaProjection?.unregisterCallback(mediaProjectionCallback)
+    runCatching { mediaProjection.unregisterCallback(mediaProjectionCallback) }
   }
 
   override fun inputPCMData(frame: Frame) {

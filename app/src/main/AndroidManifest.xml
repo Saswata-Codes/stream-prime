@@ -9,6 +9,9 @@
   <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>
   <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>
   <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
+  <!-- Sideload compatibility: user must explicitly approve unrestricted battery use. -->
+  <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
   <!--needed by background Rtp service to keep service alive-->
   <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
@@ -35,7 +38,7 @@
       android:label="@string/app_name"
       android:requestLegacyExternalStorage="true"
       android:usesCleartextTraffic="true"
-      android:allowBackup="true"
+      android:allowBackup="false"
       android:icon="@mipmap/ic_launcher"
       android:roundIcon="@mipmap/ic_launcher_round"
       android:supportsRtl="true"
@@ -141,33 +144,34 @@
     <service
         android:name=".screen.ScreenService"
         android:exported="false"
+        android:stopWithTask="false"
         android:foregroundServiceType="mediaProjection|microphone" />
+
+    <!--
+      Optional sideload compatibility mode. It is never started by the app; Android binds it only
+      after the user explicitly enables Stream Prime in Accessibility settings.
+    -->
+    <service
+        android:name=".accessibility.StreamAccessibilityService"
+        android:label="@string/accessibility_service_label"
+        android:process=":mic_share"
+        android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+        android:exported="true">
+      <intent-filter>
+        <action android:name="android.accessibilityservice.AccessibilityService" />
+      </intent-filter>
+      <meta-data
+          android:name="android.accessibilityservice"
+          android:resource="@xml/accessibility_service_config" />
+    </service>
 
     <service
         android:name=".file.FileStreamService"
         android:exported="false"
         android:foregroundServiceType="mediaProjection" />
 
-    <!-- Accessibility Service for enhanced screen capture -->
-    <service
-        android:name=".accessibility.StreamAccessibilityService"
-        android:exported="false"
-        android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
-        android:label="@string/accessibility_service_label">
-        <intent-filter>
-            <action android:name="android.accessibilityservice.AccessibilityService" />
-        </intent-filter>
-        <meta-data
-            android:name="android.accessibilityservice"
-            android:resource="@xml/accessibility_service_config" />
-    </service>
-
     <service
         android:name=".FloatingOverlayService"
-        android:exported="false" />
-
-    <service
-        android:name=".PersistentOverlayService"
         android:exported="false" />
   </application>
 

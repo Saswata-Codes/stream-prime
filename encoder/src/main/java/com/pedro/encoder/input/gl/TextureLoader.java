@@ -33,16 +33,31 @@ import com.pedro.encoder.utils.gl.GlUtil;
 public class TextureLoader {
 
   public int[] load(Bitmap[] bitmaps) {
+    return load(bitmaps, true);
+  }
+
+  /**
+   * Upload bitmaps to GL, optionally retaining their pixel storage for a reusable composition
+   * canvas. Existing stream objects keep the historical recycle-after-upload behavior.
+   */
+  public int[] load(Bitmap[] bitmaps, boolean recycleAfterUpload) {
     int[] textureId = new int[bitmaps.length];
     GlUtil.createTextures(bitmaps.length, textureId, 0);
     for (int i = 0; i < bitmaps.length; i++) {
       if (bitmaps[i] != null && !bitmaps[i].isRecycled()) {
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textureId[i]);
         GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bitmaps[i], 0);
-        bitmaps[i].recycle();
+        if (recycleAfterUpload) bitmaps[i].recycle();
       }
-      bitmaps[i] = null;
+      if (recycleAfterUpload) bitmaps[i] = null;
     }
     return textureId;
+  }
+
+  /** Update an existing same-sized texture without allocating a new GL texture object. */
+  public void update(int textureId, Bitmap bitmap) {
+    if (textureId <= 0 || bitmap == null || bitmap.isRecycled()) return;
+    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, textureId);
+    GLUtils.texSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, bitmap);
   }
 }

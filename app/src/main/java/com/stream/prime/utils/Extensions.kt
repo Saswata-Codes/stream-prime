@@ -34,21 +34,12 @@ import android.text.SpannableString
 import android.text.style.ForegroundColorSpan
 import android.view.MenuItem
 import android.view.View
-import android.view.ViewGroup
-import android.view.WindowInsets
-import android.view.WindowInsetsController
 import android.widget.Toast
 import androidx.annotation.ColorInt
 import androidx.annotation.ColorRes
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.WindowInsetsControllerCompat
-import androidx.core.view.updateLayoutParams
-import androidx.core.view.updatePadding
 import androidx.fragment.app.Fragment
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
@@ -103,12 +94,5 @@ fun MenuItem.updateMenuColor(context: Context, currentItem: MenuItem?): MenuItem
 }
 
 fun AppCompatActivity.fitAppPadding() {
-  ViewCompat.setOnApplyWindowInsetsListener(window.decorView.rootView) { view, insets ->
-    val bars = insets.getInsets(
-      WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
-    )
-    view.updatePadding(left = bars.left, top = bars.top, right = bars.right, bottom = bars.bottom)
-    view.setBackgroundColor(ContextCompat.getColor(this, R.color.appColor))
-    WindowInsetsCompat.CONSUMED
-  }
+  SystemBarInsets.apply(this)
 }

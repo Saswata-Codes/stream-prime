@@ -18,7 +18,10 @@ package com.stream.prime.screen
 
 import android.Manifest
 import android.app.AlertDialog
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -100,11 +103,22 @@ class ScreenActivity : AppCompatActivity(), ConnectChecker {
   private var currentAudioSource: MenuItem? = null
   private val serviceStateHandler = Handler(Looper.getMainLooper())
   private var serviceStateSyncAttempt = 0
+  private var recordingStateReceiverRegistered = false
+  private val recordingStateReceiver = object : BroadcastReceiver() {
+    override fun onReceive(context: Context?, intent: Intent?) {
+      if (intent?.action != ScreenService.ACTION_RECORDING_STATE_CHANGED) return
+      updateRecordButtonState(intent.getBooleanExtra(ScreenService.EXTRA_IS_RECORDING, false))
+    }
+  }
   private val serviceStateSync = object : Runnable {
     override fun run() {
       if (isFinishing || isDestroyed) return
       val service = ScreenService.INSTANCE
       if (service == null) {
+        // The recording-state receiver is not registered while this activity is backgrounded.
+        // If notification Stop destroyed the service, explicitly clear the stale Record icon.
+        updateRecordButtonState(false)
+        updateStatus("disconnected")
         if (serviceStateSyncAttempt++ < SERVICE_STATE_SYNC_ATTEMPTS) {
           serviceStateHandler.postDelayed(this, SERVICE_STATE_SYNC_DELAY_MS)
         }
@@ -177,10 +191,11 @@ class ScreenActivity : AppCompatActivity(), ConnectChecker {
   private val activityResultContract = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
     val data = result.data
     if (data != null && result.resultCode == RESULT_OK) {
-      val screenService = ScreenService.INSTANCE
-      if (screenService != null) {
-        if (screenService.prepareStream(result.resultCode, data)) {
-          when (action) {
+      val requestedAction = action
+      ScreenService.startCapture(this, result.resultCode, data) { prepared ->
+        if (prepared && ScreenService.INSTANCE != null) {
+          ScreenService.INSTANCE?.setCallback(this)
+          when (requestedAction) {
             Action.STREAM -> startStream()
             Action.RECORD -> toggleRecord()
           }
@@ -203,11 +218,6 @@ class ScreenActivity : AppCompatActivity(), ConnectChecker {
     setupStreamingServiceDropdown()
     setupClickListeners()
     
-    val screenService = ScreenService.INSTANCE
-    //No streaming/recording start service only if permissions are granted
-    if (screenService == null && checkAudioPermission()) {
-      startService(Intent(this, ScreenService::class.java))
-    }
     scheduleServiceStateSync()
   }
 
@@ -215,6 +225,27 @@ class ScreenActivity : AppCompatActivity(), ConnectChecker {
     super.onResume()
     ScreenService.INSTANCE?.reloadQualitySettings()
     scheduleServiceStateSync()
+  }
+
+  override fun onStart() {
+    super.onStart()
+    if (!recordingStateReceiverRegistered) {
+      ContextCompat.registerReceiver(
+        this,
+        recordingStateReceiver,
+        IntentFilter(ScreenService.ACTION_RECORDING_STATE_CHANGED),
+        ContextCompat.RECEIVER_NOT_EXPORTED
+      )
+      recordingStateReceiverRegistered = true
+    }
+  }
+
+  override fun onStop() {
+    if (recordingStateReceiverRegistered) {
+      unregisterReceiver(recordingStateReceiver)
+      recordingStateReceiverRegistered = false
+    }
+    super.onStop()
   }
 
   override fun onPause() {
@@ -249,12 +280,15 @@ class ScreenActivity : AppCompatActivity(), ConnectChecker {
         service.setCallback(this)
         if (!service.isStreaming() && !service.isRecording()) {
           action = Action.STREAM
-          activityResultContract.launch(service.sendIntent())
+          activityResultContract.launch(ScreenService.createCaptureIntent(this))
         } else if (!service.isStreaming()) {
           startStream()
         } else {
           stopStream()
         }
+      } else {
+        action = Action.STREAM
+        activityResultContract.launch(ScreenService.createCaptureIntent(this))
       }
     }
 
@@ -268,8 +302,11 @@ class ScreenActivity : AppCompatActivity(), ConnectChecker {
         service.setCallback(this)
         if (!service.isStreaming() && !service.isRecording()) {
           action = Action.RECORD
-          activityResultContract.launch(service.sendIntent())
+          activityResultContract.launch(ScreenService.createCaptureIntent(this))
         } else toggleRecord()
+      } else {
+        action = Action.RECORD
+        activityResultContract.launch(ScreenService.createCaptureIntent(this))
       }
     }
 
@@ -682,8 +719,6 @@ class ScreenActivity : AppCompatActivity(), ConnectChecker {
     if (screenService != null && !screenService.isStreaming() && !screenService.isRecording()) {
       screenService.setCallback(null)
       activityResultContract.unregister()
-      //stop service only if no streaming or recording
-      if (isFinishing) stopService(Intent(this, ScreenService::class.java))
     }
   }
 
@@ -759,8 +794,8 @@ class ScreenActivity : AppCompatActivity(), ConnectChecker {
     }
   }
 
-  private fun updateRecordButtonState() {
-    if (ScreenService.INSTANCE?.isRecording() == true) {
+  private fun updateRecordButtonState(recordingOverride: Boolean? = null) {
+    if (recordingOverride ?: (ScreenService.INSTANCE?.isRecording() == true)) {
       bRecord.setIcon(ContextCompat.getDrawable(this, R.drawable.stop_icon))
       bRecord.text = "STOP"
     } else {

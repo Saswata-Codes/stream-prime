@@ -49,7 +49,11 @@ abstract class BaseSender(
     protected abstract suspend fun stopImp(clear: Boolean = true)
 
     fun sendMediaFrame(mediaFrame: MediaFrame) {
-        if (running && !queue.trySend(mediaFrame)) {
+        if (!running) return
+        val result = queue.trySend(mediaFrame)
+        droppedAudioFrames += result.evictedAudioFrames
+        droppedVideoFrames += result.evictedVideoFrames
+        if (!result.accepted) {
             when (mediaFrame.type) {
                 MediaFrame.Type.VIDEO -> {
                     Log.i(TAG, "Video frame discarded")
@@ -102,12 +106,13 @@ abstract class BaseSender(
     }
 
     fun resizeCache(newSize: Int) {
-        if (newSize < queue.getSize() - queue.remainingCapacity()) {
+        if (newSize < queue.getSize()) {
             throw RuntimeException("Can't fit current cache inside new cache size")
         }
         val tempQueue = StreamBlockingQueue(newSize)
         queue.drainTo(tempQueue)
         queue = tempQueue
+        cacheSize = newSize
     }
 
     fun getCacheSize(): Int = cacheSize

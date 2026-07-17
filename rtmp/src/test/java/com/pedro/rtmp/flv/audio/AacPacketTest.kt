@@ -30,19 +30,23 @@ import java.nio.ByteBuffer
 class AacPacketTest {
 
   @Test
-  fun `GIVEN a aac buffer WHEN call create a aac packet 2 times THEN return config and expected buffer`() = runTest {
+  fun `first aac buffer emits config followed by raw audio without dropping samples`() = runTest {
     val timestamp = 123456789L
     val buffer = ByteArray(256) { 0x00 }
     val info = MediaFrame.Info(0, buffer.size, timestamp, false)
     val mediaFrame = MediaFrame(ByteBuffer.wrap(buffer), info, MediaFrame.Type.AUDIO)
     val aacPacket = AacPacket()
     aacPacket.sendAudioInfo(32000, true)
-    aacPacket.createFlvPacket(mediaFrame) { flvPacket ->
+    val packets = mutableListOf<com.pedro.rtmp.flv.FlvPacket>()
+    aacPacket.createFlvPacket(mediaFrame) { packets += it }
+
+    assertEquals(2, packets.size)
+    packets[0].let { flvPacket ->
       assertEquals(FlvType.AUDIO, flvPacket.type)
       assertEquals((-81).toByte(), flvPacket.buffer[0])
       assertEquals(AacPacket.Type.SEQUENCE.mark, flvPacket.buffer[1])
     }
-    aacPacket.createFlvPacket(mediaFrame) { flvPacket ->
+    packets[1].let { flvPacket ->
       assertEquals(FlvType.AUDIO, flvPacket.type)
       assertEquals((-81).toByte(), flvPacket.buffer[0])
       assertEquals(AacPacket.Type.RAW.mark, flvPacket.buffer[1])

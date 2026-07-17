@@ -135,7 +135,7 @@
 
       <View android:layout_width="8dp" android:layout_height="1dp" />
 
-      <Button android:id="@+id/btn_add_image" android:layout_width="wrap_content" android:layout_height="48dp" android:text="+ Image" />
+      <Button android:id="@+id/btn_add_image" android:layout_width="wrap_content" android:layout_height="48dp" android:text="+ Image / GIF" />
       <Button android:id="@+id/btn_add_text" android:layout_width="wrap_content" android:layout_height="48dp" android:text="+ Text" />
       <Button android:id="@+id/btn_select_screen" android:layout_width="wrap_content" android:layout_height="48dp" android:text="Screen" />
       <Button android:id="@+id/btn_show_layers" android:layout_width="wrap_content" android:layout_height="48dp" android:text="Layers" />

@@ -64,20 +64,8 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Start persistent overlay service to maintain app in permission list
-        startPersistentOverlayService()
-
         setupClickListeners()
         checkAndRequestPermissions()
-    }
-
-    private fun startPersistentOverlayService() {
-        try {
-            val intent = Intent(this, PersistentOverlayService::class.java)
-            startService(intent)
-        } catch (e: Exception) {
-            Log.d("MainActivity", "Error starting persistent overlay service: ${e.message}")
-        }
     }
 
     private fun setupClickListeners() {

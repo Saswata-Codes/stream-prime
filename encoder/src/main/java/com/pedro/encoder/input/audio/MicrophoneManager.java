@@ -49,7 +49,7 @@ public class MicrophoneManager {
   protected byte[] pcmBufferDevice = new byte[AudioEncoder.inputSize];
   protected byte[] pcmBufferMix = new byte[AudioEncoder.inputSize];
   protected byte[] pcmBufferMuted = new byte[AudioEncoder.inputSize];
-  protected boolean running = false;
+  protected volatile boolean running = false;
   private boolean created = false;
   //default parameters for microphone
   private int sampleRate = 32000; //hz
@@ -101,6 +101,7 @@ public class MicrophoneManager {
    */
   public boolean createMicrophone(int audioSource, int sampleRate, boolean isStereo,
       boolean echoCanceler, boolean noiseSuppressor) {
+    boolean result = false;
     try {
       this.sampleRate = sampleRate;
       channel = isStereo ? AudioFormat.CHANNEL_IN_STEREO : AudioFormat.CHANNEL_IN_MONO;
@@ -116,10 +117,11 @@ public class MicrophoneManager {
       Log.i(TAG, "Microphone created, " + sampleRate + "hz, " + chl);
       mode = Mode.MICROPHONE;
       created = true;
+      result = true;
     } catch (IllegalArgumentException e) {
       Log.e(TAG, "create microphone error", e);
     }
-    return created;
+    return result;
   }
 
   /**
@@ -136,6 +138,7 @@ public class MicrophoneManager {
    */
   public boolean createInternalMicrophone(AudioPlaybackCaptureConfiguration config, int sampleRate,
       boolean isStereo, boolean echoCanceler, boolean noiseSuppressor) {
+    boolean result = false;
     try {
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
         this.sampleRate = sampleRate;
@@ -149,9 +152,8 @@ public class MicrophoneManager {
                   .build())
                 .setBufferSizeInBytes(AudioEncoder.inputSize * 5)
                 .build();
-        audioPostProcessEffect = new AudioPostProcessEffect(audioRecordDevice.getAudioSessionId());
-        if (echoCanceler) audioPostProcessEffect.enableEchoCanceler();
-        if (noiseSuppressor) audioPostProcessEffect.enableNoiseSuppressor();
+        // Playback capture is already-rendered device PCM. Microphone AEC/NS effects are not
+        // applicable to REMOTE_SUBMIX and can destabilize or distort it on vendor audio stacks.
         String chl = (isStereo) ? "Stereo" : "Mono";
         if (audioRecordDevice.getState() != AudioRecord.STATE_INITIALIZED) {
           throw new IllegalArgumentException("Some parameters specified are not valid");
@@ -159,13 +161,25 @@ public class MicrophoneManager {
         Log.i(TAG, "Internal microphone created, " + sampleRate + "hz, " + chl);
         mode = Mode.INTERNAL;
         created = true;
+        result = true;
       } else {
         return createMicrophone(sampleRate, isStereo, echoCanceler, noiseSuppressor);
       }
-    } catch (IllegalArgumentException e) {
-      Log.e(TAG, "create microphone error", e);
+    } catch (RuntimeException e) {
+      // Vendor audio policies can reject playback capture with UnsupportedOperationException or
+      // SecurityException as well as IllegalArgumentException. Treat all of them as an unavailable
+      // source and release any partially-created AudioRecord instead of crashing the app.
+      Log.e(TAG, "create internal microphone error", e);
+      if (audioRecordDevice != null) {
+        try {
+          audioRecordDevice.release();
+        } catch (RuntimeException releaseError) {
+          Log.w(TAG, "Unable to release failed internal AudioRecord", releaseError);
+        }
+        audioRecordDevice = null;
+      }
     }
-    return created;
+    return result;
   }
 
   public boolean createMixMicrophone(
@@ -175,6 +189,7 @@ public class MicrophoneManager {
     boolean micResult = createMicrophone(audioSource, sampleRate, isStereo, echoCanceler, noiseSuppressor);
     if (!micResult) return false;
     boolean internalResult = createInternalMicrophone(config, sampleRate, isStereo, echoCanceler, noiseSuppressor);
+    if (!internalResult) stop();
     mode = Mode.MIX;
     return internalResult;
   }
@@ -194,9 +209,19 @@ public class MicrophoneManager {
     Handler handler = new Handler(handlerThread.getLooper());
     handler.post(() -> {
       while (running) {
-        Frame frame = read();
-        if (frame != null) {
-          getMicrophoneData.inputPCMData(frame);
+        try {
+          Frame frame = read();
+          if (frame != null && running) {
+            getMicrophoneData.inputPCMData(frame);
+          }
+        } catch (RuntimeException error) {
+          // stop() intentionally releases AudioRecord to unblock a pending read. Vendor audio
+          // stacks can expose that release to this worker before the loop observes running=false.
+          // Treat it as normal shutdown; an audio teardown must never crash the app process.
+          if (running) {
+            Log.e(TAG, "Audio capture stopped after an unexpected read failure", error);
+          }
+          break;
         }
       }
     });
@@ -258,7 +283,9 @@ public class MicrophoneManager {
     long timeStamp = TimeUtils.getCurrentTimeMicro();
     switch (mode) {
         case MICROPHONE -> {
-          int size = audioRecord.read(pcmBuffer, 0, pcmBuffer.length);
+          AudioRecord microphone = audioRecord;
+          if (!running || microphone == null) return null;
+          int size = microphone.read(pcmBuffer, 0, pcmBuffer.length);
           if (size < 0) {
             Log.e(TAG, "read error: " + size);
             return null;
@@ -267,7 +294,9 @@ public class MicrophoneManager {
           return new Frame(muted ? pcmBufferMuted : customAudioEffect.process(pcmBuffer), 0, size, timeStamp);
         }
         case INTERNAL -> {
-          int size = audioRecordDevice.read(pcmBufferDevice, 0, pcmBufferDevice.length);
+          AudioRecord internal = audioRecordDevice;
+          if (!running || internal == null) return null;
+          int size = internal.read(pcmBufferDevice, 0, pcmBufferDevice.length);
           if (size < 0) {
             Log.e(TAG, "read error: " + size);
             return null;
@@ -276,18 +305,26 @@ public class MicrophoneManager {
           return new Frame(muted ? pcmBufferMuted : customAudioEffect.process(pcmBufferDevice), 0, size, timeStamp);
         }
         case MIX -> {
-          int size = audioRecord.read(pcmBuffer, 0, pcmBuffer.length);
+          AudioRecord microphone = audioRecord;
+          AudioRecord internal = audioRecordDevice;
+          if (!running || microphone == null || internal == null) return null;
+          int size = microphone.read(pcmBuffer, 0, pcmBuffer.length);
           if (size < 0) {
             Log.e(TAG, "read error: " + size);
             return null;
           }
-          int sizeInternal = audioRecordDevice.read(pcmBufferDevice, 0, pcmBufferDevice.length);
+          if (!running) return null;
+          int sizeInternal = internal.read(pcmBufferDevice, 0, pcmBufferDevice.length);
           if (sizeInternal < 0) {
             Log.e(TAG, "read error: " + sizeInternal);
             return null;
           }
           audioUtils.applyVolumeAndMix(pcmBuffer, microphoneVolume, pcmBufferDevice, internalVolume, pcmBufferMix);
-          return new Frame(muted ? pcmBufferMuted : customAudioEffect.process(pcmBufferMix), 0, size, timeStamp);
+          // Sequential AudioRecord reads can return different valid byte counts during route
+          // startup/recovery. Never expose stale bytes from the longer buffer to the encoder.
+          int mixedSize = Math.min(size, sizeInternal) & ~1;
+          if (mixedSize <= 0) return null;
+          return new Frame(muted ? pcmBufferMuted : customAudioEffect.process(pcmBufferMix), 0, mixedSize, timeStamp);
         }
         default -> { return null; }
     }
@@ -306,17 +343,23 @@ public class MicrophoneManager {
         handlerThread.quit();
       }
     }
-    if (audioRecord != null) {
-      audioRecord.setRecordPositionUpdateListener(null);
-      audioRecord.stop();
-      audioRecord.release();
-      audioRecord = null;
-    }
+    // Stop playback capture first. If MediaProjection was revoked, this is the invalid track and
+    // must be interrupted before AudioRecord performs its slow restore/retry cycle.
     if (audioRecordDevice != null) {
       audioRecordDevice.setRecordPositionUpdateListener(null);
-      audioRecordDevice.stop();
+      if (audioRecordDevice.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
+        audioRecordDevice.stop();
+      }
       audioRecordDevice.release();
       audioRecordDevice = null;
+    }
+    if (audioRecord != null) {
+      audioRecord.setRecordPositionUpdateListener(null);
+      if (audioRecord.getRecordingState() == AudioRecord.RECORDSTATE_RECORDING) {
+        audioRecord.stop();
+      }
+      audioRecord.release();
+      audioRecord = null;
     }
     if (audioPostProcessEffect != null) {
       audioPostProcessEffect.release();

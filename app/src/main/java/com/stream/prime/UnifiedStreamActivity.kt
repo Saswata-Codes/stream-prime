@@ -1,7 +1,10 @@
 package com.stream.prime
 
 import android.Manifest
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -17,6 +20,7 @@ import com.pedro.common.ConnectChecker
 import com.pedro.library.base.recording.RecordController
 import com.stream.prime.databinding.ActivityUnifiedStreamBinding
 import com.stream.prime.screen.ScreenService
+import com.stream.prime.screen.MicrophoneMuteVolumePolicy
 import com.stream.prime.settings.SettingsManager
 import com.stream.prime.settings.StreamSettingsActivity
 import com.stream.prime.file.FileStreamService
@@ -49,6 +53,10 @@ class UnifiedStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolder
         private const val REQUEST_FOREGROUND_SERVICE_MEDIA_PROJECTION_PERMISSION = 124
         private const val SERVICE_STATE_SYNC_ATTEMPTS = 20
         private const val SERVICE_STATE_SYNC_DELAY_MS = 100L
+        private const val STREAM_AUDIO_PREFS = "StreamAudioPrefs"
+        private const val KEY_MIC_VOLUME = "mic_volume"
+        private const val KEY_MIC_VOLUME_BEFORE_MUTE = "mic_volume_before_mute"
+        private const val KEY_MIC_MUTED = "mic_muted"
     }
 
     private lateinit var binding: ActivityUnifiedStreamBinding
@@ -63,10 +71,43 @@ class UnifiedStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolder
     private var isFileStreaming = false
     private var floatingOverlayService: FloatingOverlayService? = null
     private var micVolume = 100
+    private var micVolumeBeforeMute = 100
     private var deviceVolume = 100
+    private var isMicMuted = false
     private var pendingAction: Action? = null
     private val serviceStateHandler = Handler(Looper.getMainLooper())
     private var serviceStateSyncAttempt = 0
+    private var recordingStateReceiverRegistered = false
+    private val recordingStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (isFileStreaming) return
+            when (intent?.action) {
+                ScreenService.ACTION_RECORDING_STATE_CHANGED -> updateRecordButtonState(
+                    intent.getBooleanExtra(ScreenService.EXTRA_IS_RECORDING, false)
+                )
+                ScreenService.ACTION_MICROPHONE_STATE_CHANGED -> {
+                    applyMicrophoneState(
+                        MicrophoneMuteVolumePolicy.fromStored(
+                            volumePercent = intent.getIntExtra(
+                                ScreenService.EXTRA_MICROPHONE_VOLUME,
+                                micVolume
+                            ),
+                            restorePercent = intent.getIntExtra(
+                                ScreenService.EXTRA_MICROPHONE_RESTORE_VOLUME,
+                                micVolumeBeforeMute
+                            ),
+                            muted = intent.getBooleanExtra(
+                                ScreenService.EXTRA_MICROPHONE_MUTED,
+                                isMicMuted
+                            )
+                        ),
+                        persist = true
+                    )
+                    updateMicrophoneUi()
+                }
+            }
+        }
+    }
     private val serviceStateSync = object : Runnable {
         override fun run() {
             if (isFinishing || isDestroyed) return
@@ -77,6 +118,12 @@ class UnifiedStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolder
                 ScreenService.INSTANCE != null
             }
             if (!stateSourceReady) {
+                // A notification Stop can destroy ScreenService while this activity is in the
+                // background, so its non-sticky state broadcast is intentionally missed. Treat a
+                // missing capture service as the authoritative inactive state before retrying for
+                // a service that may still be starting.
+                updateStreamButtonState()
+                updateRecordButtonState(false)
                 if (serviceStateSyncAttempt++ < SERVICE_STATE_SYNC_ATTEMPTS) {
                     serviceStateHandler.postDelayed(this, SERVICE_STATE_SYNC_DELAY_MS)
                 }
@@ -106,17 +153,26 @@ class UnifiedStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolder
     ) { result ->
         if (result.resultCode == RESULT_OK) {
             val data = result.data
-            val service = ScreenService.INSTANCE
-            if (service != null && data != null) {
-                service.setCallback(this)
-                if (service.prepareStream(result.resultCode, data)) {
-                    when (action) {
+            if (data != null) {
+                val requestedAction = action
+                ScreenService.startCapture(this, result.resultCode, data) { prepared ->
+                    val service = ScreenService.INSTANCE
+                    if (prepared && service != null) {
+                      service.setCallback(this)
+                      when (requestedAction) {
                         Action.STREAM -> {
                             startStream()
                         }
                         Action.RECORD -> {
                             startRecord()
                         }
+                      }
+                    } else {
+                        Toast.makeText(
+                            this,
+                            "Prepare stream failed",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     }
                 }
             }
@@ -286,15 +342,8 @@ class UnifiedStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolder
             )
         }
         
-        // Handle system alert window permission
-        if (!PermissionManager.isSystemAlertWindowPermissionGranted(this)) {
-            PermissionManager.openSystemAlertWindowSettings(this)
-        }
-        
-        // Handle accessibility service permission
-        if (!PermissionManager.isAccessibilityServiceEnabled()) {
-            PermissionManager.openAccessibilitySettings(this)
-        }
+        // Draw-over-apps is requested only when the optional floating control is enabled.
+        // Screen capture itself must not depend on an accessibility service or overlay window.
     }
 
     private fun showPermissionExplanationDialog() {
@@ -313,6 +362,30 @@ class UnifiedStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolder
     override fun onResume() {
         super.onResume()
         scheduleServiceStateSync()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (!recordingStateReceiverRegistered) {
+            ContextCompat.registerReceiver(
+                this,
+                recordingStateReceiver,
+                IntentFilter().apply {
+                    addAction(ScreenService.ACTION_RECORDING_STATE_CHANGED)
+                    addAction(ScreenService.ACTION_MICROPHONE_STATE_CHANGED)
+                },
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+            recordingStateReceiverRegistered = true
+        }
+    }
+
+    override fun onStop() {
+        if (recordingStateReceiverRegistered) {
+            unregisterReceiver(recordingStateReceiver)
+            recordingStateReceiverRegistered = false
+        }
+        super.onStop()
     }
 
     override fun onPause() {
@@ -433,22 +506,44 @@ class UnifiedStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolder
             // First try to get from service if available
             val service = ScreenService.INSTANCE
             if (service != null) {
-                micVolume = service.getMicVolume()
+                applyMicrophoneState(
+                    MicrophoneMuteVolumePolicy.fromStored(
+                        volumePercent = service.getMicVolume(),
+                        restorePercent = service.getMicVolumeBeforeMute(),
+                        muted = service.isMicrophoneMuted()
+                    ),
+                    persist = true
+                )
                 deviceVolume = service.getDeviceVolume()
                 Log.d(TAG, "Volume settings loaded from service - Mic: $micVolume%, Device: $deviceVolume%")
             } else {
                 // Fallback to local SharedPreferences
-                val prefs = getSharedPreferences("StreamAudioPrefs", MODE_PRIVATE)
-                micVolume = prefs.getInt("mic_volume", 100)
+                val prefs = getSharedPreferences(STREAM_AUDIO_PREFS, MODE_PRIVATE)
+                applyMicrophoneState(
+                    MicrophoneMuteVolumePolicy.fromStored(
+                        volumePercent = prefs.getInt(KEY_MIC_VOLUME, 100),
+                        restorePercent = if (prefs.contains(KEY_MIC_VOLUME_BEFORE_MUTE)) {
+                            prefs.getInt(KEY_MIC_VOLUME_BEFORE_MUTE, 100)
+                        } else {
+                            null
+                        },
+                        muted = prefs.getBoolean(KEY_MIC_MUTED, false)
+                    ),
+                    persist = true
+                )
                 deviceVolume = prefs.getInt("device_volume", 100)
                 Log.d(TAG, "Volume settings loaded from local prefs - Mic: $micVolume%, Device: $deviceVolume%")
             }
             
             // Update UI to reflect saved settings
-            binding.seekbarMicVolume.progress = micVolume
-            binding.txtMicVolume.text = "$micVolume%"
+            updateMicrophoneUi()
             binding.seekbarDeviceVolume.progress = deviceVolume
             binding.txtDeviceVolume.text = "$deviceVolume%"
+
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                binding.seekbarDeviceVolume.isEnabled = false
+                binding.txtDeviceVolume.text = "Android 10+"
+            }
             
             // Apply settings to service if available and streaming
             if (service != null && service.isStreaming()) {
@@ -460,12 +555,44 @@ class UnifiedStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolder
         } catch (e: Exception) {
             Log.e(TAG, "Error loading volume settings: ${e.message}")
             // Use defaults if loading fails
-            micVolume = 100
+            applyMicrophoneState(
+                MicrophoneMuteVolumePolicy.fromStored(100, 100, muted = false),
+                persist = false
+            )
             deviceVolume = 100
-            binding.seekbarMicVolume.progress = micVolume
-            binding.txtMicVolume.text = "$micVolume%"
+            updateMicrophoneUi()
             binding.seekbarDeviceVolume.progress = deviceVolume
             binding.txtDeviceVolume.text = "$deviceVolume%"
+        }
+    }
+
+    private fun applyMicrophoneState(
+        state: MicrophoneMuteVolumePolicy.State,
+        persist: Boolean
+    ) {
+        micVolume = state.volumePercent
+        micVolumeBeforeMute = state.restorePercent
+        isMicMuted = state.muted
+        if (persist) {
+            getSharedPreferences(STREAM_AUDIO_PREFS, MODE_PRIVATE)
+                .edit()
+                .putInt(KEY_MIC_VOLUME, micVolume)
+                .putInt(KEY_MIC_VOLUME_BEFORE_MUTE, micVolumeBeforeMute)
+                .putBoolean(KEY_MIC_MUTED, isMicMuted)
+                .apply()
+        }
+    }
+
+    private fun updateMicrophoneUi() {
+        runOnUiThread {
+            binding.seekbarMicVolume.isEnabled = !isMicMuted
+            binding.seekbarMicVolume.alpha = if (isMicMuted) 0.45f else 1f
+            if (binding.seekbarMicVolume.progress != micVolume) {
+                binding.seekbarMicVolume.progress = micVolume
+            }
+            binding.txtMicVolume.text = "$micVolume%"
+            binding.txtMicVolume.alpha = if (isMicMuted) 0.45f else 1f
+            binding.btnMic.text = if (isMicMuted) "🔇" else "🎤"
         }
     }
 
@@ -473,9 +600,19 @@ class UnifiedStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolder
         // Microphone volume control
         binding.seekbarMicVolume.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
-                micVolume = progress
                 binding.txtMicVolume.text = "$progress%"
-                updateMicVolume()
+                if (fromUser && !isMicMuted) {
+                    val state = MicrophoneMuteVolumePolicy.setVolume(
+                        MicrophoneMuteVolumePolicy.fromStored(
+                            micVolume,
+                            micVolumeBeforeMute,
+                            isMicMuted
+                        ),
+                        progress
+                    )
+                    applyMicrophoneState(state, persist = false)
+                    updateMicVolume()
+                }
             }
             
             override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
@@ -498,8 +635,12 @@ class UnifiedStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolder
     private fun updateMicVolume() {
         try {
             // Save to local SharedPreferences
-            val prefs = getSharedPreferences("StreamAudioPrefs", MODE_PRIVATE)
-            prefs.edit().putInt("mic_volume", micVolume).apply()
+            val prefs = getSharedPreferences(STREAM_AUDIO_PREFS, MODE_PRIVATE)
+            prefs.edit()
+                .putInt(KEY_MIC_VOLUME, micVolume)
+                .putInt(KEY_MIC_VOLUME_BEFORE_MUTE, micVolumeBeforeMute)
+                .putBoolean(KEY_MIC_MUTED, isMicMuted)
+                .apply()
             
             // Update service if available
             val service = ScreenService.INSTANCE
@@ -565,12 +706,10 @@ class UnifiedStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolder
             return
         }
         
+        saveCurrentVolumeSettings()
         val service = ScreenService.INSTANCE
         if (service != null) {
             service.setCallback(this)
-            
-            // Save current volume settings and apply them before starting stream
-            saveCurrentVolumeSettings()
             service.applyCurrentVolumeSettings()
             
             val prefs = getSharedPreferences("StreamSettings", 0)
@@ -579,29 +718,33 @@ class UnifiedStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolder
 
             if (!service.isStreaming() && !service.isRecording()) {
                 action = Action.STREAM
-                activityResultContract.launch(service.sendIntent())
+                activityResultContract.launch(ScreenService.createCaptureIntent(this))
             } else {
                 stopStream()
             }
+        } else {
+            action = Action.STREAM
+            activityResultContract.launch(ScreenService.createCaptureIntent(this))
         }
         updateStreamButtonState()
     }
 
     private fun setupRecordButton() {
+        saveCurrentVolumeSettings()
         val service = ScreenService.INSTANCE
         if (service != null) {
             service.setCallback(this)
-            
-            // Save current volume settings and apply them before starting recording
-            saveCurrentVolumeSettings()
             service.applyCurrentVolumeSettings()
             
             if (!service.isStreaming() && !service.isRecording()) {
                 action = Action.RECORD
-                activityResultContract.launch(service.sendIntent())
+                activityResultContract.launch(ScreenService.createCaptureIntent(this))
             } else {
                 stopRecord()
             }
+        } else {
+            action = Action.RECORD
+            activityResultContract.launch(ScreenService.createCaptureIntent(this))
         }
         updateRecordButtonState()
     }
@@ -631,14 +774,7 @@ class UnifiedStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolder
 
     private fun startServiceIfPermissionsGranted() {
         if (checkAudioPermission()) {
-            if (ScreenService.INSTANCE == null) {
-                startService(Intent(this, ScreenService::class.java))
-                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                    setupStreamButton()
-                }, 100)
-            } else {
-                setupStreamButton()
-            }
+            setupStreamButton()
         } else {
             pendingAction = Action.STREAM
         }
@@ -646,14 +782,7 @@ class UnifiedStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolder
 
     private fun startServiceIfPermissionsGrantedForRecord() {
         if (checkAudioPermission()) {
-            if (ScreenService.INSTANCE == null) {
-                startService(Intent(this, ScreenService::class.java))
-                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                    setupRecordButton()
-                }, 100)
-            } else {
-                setupRecordButton()
-            }
+            setupRecordButton()
         } else {
             pendingAction = Action.RECORD
         }
@@ -919,8 +1048,8 @@ class UnifiedStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolder
         }
     }
 
-    private fun updateRecordButtonState() {
-        val isRecording = if (isFileStreaming) {
+    private fun updateRecordButtonState(recordingOverride: Boolean? = null) {
+        val isRecording = recordingOverride ?: if (isFileStreaming) {
             FileStreamService.INSTANCE?.isRecording() ?: false
         } else {
             ScreenService.INSTANCE?.isRecording() ?: false
@@ -1077,28 +1206,51 @@ class UnifiedStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolder
     }
 
     private fun toggleMicrophone() {
+        // The control must also work before a capture service exists. Persist the requested state
+        // so a subsequently-created ScreenService starts with the same mute selection.
         val service = ScreenService.INSTANCE
         if (service != null) {
-            service.toggleMicrophone()
-            updateMicrophoneButtonState()
-            // Update notification to reflect the microphone state change
-            service.updateNotification()
+            service.setMicrophoneMuted(!service.isMicrophoneMuted())
+            applyMicrophoneState(
+                MicrophoneMuteVolumePolicy.fromStored(
+                    volumePercent = service.getMicVolume(),
+                    restorePercent = service.getMicVolumeBeforeMute(),
+                    muted = service.isMicrophoneMuted()
+                ),
+                persist = true
+            )
+        } else {
+            val nextState = MicrophoneMuteVolumePolicy.setMuted(
+                MicrophoneMuteVolumePolicy.fromStored(
+                    volumePercent = micVolume,
+                    restorePercent = micVolumeBeforeMute,
+                    muted = isMicMuted
+                ),
+                muted = !isMicMuted
+            )
+            applyMicrophoneState(nextState, persist = true)
         }
+        updateMicrophoneUi()
     }
 
     private fun updateMicrophoneButtonState() {
         val service = ScreenService.INSTANCE
         if (service != null) {
-            runOnUiThread {
-                if (service.isMicrophoneMuted()) {
-                    binding.btnMic.text = "🔇"
-                    Log.d(TAG, "Microphone button updated to muted state")
-                } else {
-                    binding.btnMic.text = "🎤"
-                    Log.d(TAG, "Microphone button updated to unmuted state")
-                }
-            }
+            applyMicrophoneState(
+                MicrophoneMuteVolumePolicy.fromStored(
+                    volumePercent = service.getMicVolume(),
+                    restorePercent = service.getMicVolumeBeforeMute(),
+                    muted = service.isMicrophoneMuted()
+                ),
+                persist = true
+            )
         }
+        updateMicrophoneUi()
+        Log.d(
+            TAG,
+            "Microphone UI updated - muted=$isMicMuted, volume=$micVolume%, " +
+                "restore=$micVolumeBeforeMute%"
+        )
     }
     
     private fun startMicrophoneSync() {
@@ -1251,10 +1403,12 @@ class UnifiedStreamActivity : AppCompatActivity(), ConnectChecker, SurfaceHolder
             Log.d(TAG, "Current UI values - Mic: $micVolume%, Device: $deviceVolume%")
             
             // Save to local SharedPreferences
-            val prefs = getSharedPreferences("StreamAudioPrefs", MODE_PRIVATE)
+            val prefs = getSharedPreferences(STREAM_AUDIO_PREFS, MODE_PRIVATE)
             prefs.edit()
-                .putInt("mic_volume", micVolume)
+                .putInt(KEY_MIC_VOLUME, micVolume)
+                .putInt(KEY_MIC_VOLUME_BEFORE_MUTE, micVolumeBeforeMute)
                 .putInt("device_volume", deviceVolume)
+                .putBoolean(KEY_MIC_MUTED, isMicMuted)
                 .apply()
             
             Log.d(TAG, "✅ Saved to SharedPreferences - Mic: $micVolume%, Device: $deviceVolume%")

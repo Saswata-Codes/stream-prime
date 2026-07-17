@@ -14,6 +14,8 @@ object SettingsManager {
     private const val KEY_STREAM_URL = "stream_url"
     private const val KEY_STREAM_KEY = "stream_key"
     private const val KEY_STREAMING_MODE = "streaming_mode"
+    private const val KEY_GAME_VOICE_CHAT_COMPATIBILITY = "game_voice_chat_compatibility"
+    private const val KEY_BACKGROUND_PROTECTION_PROMPTED = "background_protection_prompted"
     
     // Separate stream keys for each service
     private const val KEY_YOUTUBE_STREAM_KEY = "youtube_stream_key"
@@ -112,6 +114,29 @@ object SettingsManager {
     
     fun getAppPreference(context: Context, key: String, defaultValue: String = ""): String {
         return getAppPrefs(context).getString(key, defaultValue) ?: defaultValue
+    }
+
+    /**
+     * Sideload-only compatibility mode for games that already own the physical microphone.
+     * Disabled by default because it requires the user to enable an AccessibilityService and
+     * grants that service sensitive system-level status even though it reads no screen content.
+     */
+    fun isGameVoiceChatCompatibilityEnabled(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_GAME_VOICE_CHAT_COMPATIBILITY, false)
+    }
+
+    fun setGameVoiceChatCompatibilityEnabled(context: Context, enabled: Boolean) {
+        getPrefs(context).edit().putBoolean(KEY_GAME_VOICE_CHAT_COMPATIBILITY, enabled).apply()
+        notifyListeners()
+        Log.d(TAG, "Game voice-chat compatibility updated to: $enabled")
+    }
+
+    fun wasBackgroundProtectionPrompted(context: Context): Boolean {
+        return getPrefs(context).getBoolean(KEY_BACKGROUND_PROTECTION_PROMPTED, false)
+    }
+
+    fun markBackgroundProtectionPrompted(context: Context) {
+        getPrefs(context).edit().putBoolean(KEY_BACKGROUND_PROTECTION_PROMPTED, true).apply()
     }
     
     // RTMP Settings
@@ -404,6 +429,8 @@ object SettingsManager {
             KEY_STREAM_URL to getStreamUrl(context),
             KEY_STREAM_KEY to getStreamKey(context),
             KEY_STREAMING_MODE to getStreamingMode(context),
+            KEY_GAME_VOICE_CHAT_COMPATIBILITY to
+                isGameVoiceChatCompatibilityEnabled(context),
             KEY_LANDSCAPE_WIDTH to getLandscapeWidth(context),
             KEY_LANDSCAPE_HEIGHT to getLandscapeHeight(context),
             KEY_LANDSCAPE_FPS to getLandscapeFps(context),
@@ -423,6 +450,7 @@ object SettingsManager {
         editor.putString(KEY_STREAM_URL, "rtmp://a.rtmp.youtube.com/live2/")
         editor.putString(KEY_STREAM_KEY, "")
         editor.putString(KEY_STREAMING_MODE, "Landscape")
+        editor.putBoolean(KEY_GAME_VOICE_CHAT_COMPATIBILITY, false)
         
         // Landscape defaults
         editor.putInt(KEY_LANDSCAPE_WIDTH, 1280)

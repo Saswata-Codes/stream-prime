@@ -7,10 +7,12 @@ import android.graphics.*
  * Shared canvas rendering logic used by both OverlayPreviewView and LayeredOverlayRenderer.
  * This ensures the preview and actual stream overlay look identical.
  */
-object LayerCanvasRenderer {
+internal object LayerCanvasRenderer {
+
+    data class RenderResult(val hasAnimatedLayers: Boolean)
     
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        isFilterBitmap = true
+    private val paintByThread = ThreadLocal.withInitial {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply { isFilterBitmap = true }
     }
     
     /**
@@ -23,10 +25,11 @@ object LayerCanvasRenderer {
         canvasWidth: Float,
         canvasHeight: Float,
         context: Context,
-        layerBitmapCache: MutableMap<String, Bitmap?>,
-        clearCanvas: Boolean = true
-    ) {
-        if (canvasWidth <= 0 || canvasHeight <= 0) return
+        layerAssetCache: OverlayAssetCache,
+        clearCanvas: Boolean = true,
+        frameTimeMs: Long = android.os.SystemClock.uptimeMillis()
+    ): RenderResult {
+        if (canvasWidth <= 0 || canvasHeight <= 0) return RenderResult(false)
 
         if (clearCanvas) {
             // Stream overlay bitmaps need transparency. Preview can retain its screen placeholder.
@@ -34,12 +37,22 @@ object LayerCanvasRenderer {
         }
 
         // Draw each enabled layer in z-order
+        var hasAnimatedLayers = false
         layers
             .filter { it.enabled && (it.type == OverlayLayerType.TEXT || it.imageUri.isNotEmpty()) }
             .sortedBy { it.zIndex }
             .forEach { layer ->
-                renderSingleLayer(canvas, layer, canvasWidth, canvasHeight, context, layerBitmapCache)
+                hasAnimatedLayers = renderSingleLayer(
+                    canvas,
+                    layer,
+                    canvasWidth,
+                    canvasHeight,
+                    context,
+                    layerAssetCache,
+                    frameTimeMs
+                ) || hasAnimatedLayers
             }
+        return RenderResult(hasAnimatedLayers)
     }
     
     /**
@@ -52,14 +65,16 @@ object LayerCanvasRenderer {
         canvasWidth: Float,
         canvasHeight: Float,
         context: Context,
-        layerBitmapCache: MutableMap<String, Bitmap?>
-    ) {
+        layerAssetCache: OverlayAssetCache,
+        frameTimeMs: Long
+    ): Boolean {
         try {
+            val paint = paintByThread.get()
             if (layer.type == OverlayLayerType.TEXT) {
-                renderTextLayer(canvas, layer, canvasWidth, canvasHeight)
-                return
+                renderTextLayer(canvas, layer, canvasWidth, canvasHeight, paint)
+                return false
             }
-            val layerBitmap = getOrLoadLayerBitmap(layer, context, layerBitmapCache) ?: return
+            val asset = layerAssetCache.getOrLoad(context, layer) ?: return false
             
             // Calculate layer position and desired box based on percentages
             val layerX = (layer.positionXPct / 100f) * canvasWidth
@@ -71,8 +86,8 @@ object LayerCanvasRenderer {
             paint.alpha = (layer.alpha * 255).toInt()
             
             // Preserve aspect ratio: compute a uniform scale based on desired box
-            val bmpW = layerBitmap.width.toFloat()
-            val bmpH = layerBitmap.height.toFloat()
+            val bmpW = asset.width.toFloat()
+            val bmpH = asset.height.toFloat()
 
             // Determine scale factor
             val scale: Float = when {
@@ -88,18 +103,23 @@ object LayerCanvasRenderer {
             // Destination rectangle using top-left anchor (no stretching)
             val destRect = RectF(layerX, layerY, layerX + drawW, layerY + drawH)
 
-            // Rotate around the visible layer center, matching the editor preview.
-            val save = canvas.save()
-            canvas.rotate(layer.rotationDegrees, destRect.centerX(), destRect.centerY())
-            canvas.drawBitmap(layerBitmap, null, destRect, paint)
-            canvas.restoreToCount(save)
+            // GIF and still image assets share identical aspect/transform math.
+            asset.draw(canvas, destRect, layer.rotationDegrees, paint, frameTimeMs)
+            return asset.animated
             
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             // Silent fail to prevent crashes in either preview or stream
+            return false
         }
     }
 
-    private fun renderTextLayer(canvas: Canvas, layer: OverlayLayer, canvasWidth: Float, canvasHeight: Float) {
+    private fun renderTextLayer(
+        canvas: Canvas,
+        layer: OverlayLayer,
+        canvasWidth: Float,
+        canvasHeight: Float,
+        paint: Paint
+    ) {
         val left = layer.positionXPct / 100f * canvasWidth
         val top = layer.positionYPct / 100f * canvasHeight
         val width = layer.scaleXPct / 100f * canvasWidth
@@ -122,42 +142,10 @@ object LayerCanvasRenderer {
     }
     
     /**
-     * Load and cache layer bitmaps.
-     * Shared caching logic for consistent behavior.
+     * Clear decoded assets to prevent bitmap/native decoder leaks.
      */
-    private fun getOrLoadLayerBitmap(
-        layer: OverlayLayer,
-        context: Context,
-        layerBitmapCache: MutableMap<String, Bitmap?>
-    ): Bitmap? {
-        val cacheKey = "${layer.id}::${layer.imageUri}"
-
-        // Return cached if exists
-        layerBitmapCache[cacheKey]?.let { return it }
-
-        // Cleanup any stale entries for this layer id (old image URIs or legacy keys)
-        val staleKeys = layerBitmapCache.keys.filter { key ->
-            key == layer.id || key.startsWith("${layer.id}::") && key != cacheKey
-        }
-        staleKeys.forEach { key ->
-            layerBitmapCache[key]?.recycle()
-            layerBitmapCache.remove(key)
-        }
-
-        // Load bitmap from URI (may return null if empty)
-        val bitmap = OverlayManager.decodeBitmap(context, layer.imageUri)
-        layerBitmapCache[cacheKey] = bitmap
-        return bitmap
-    }
-    
-    /**
-     * Clear bitmap cache and recycle bitmaps to prevent memory leaks.
-     */
-    fun clearBitmapCache(layerBitmapCache: MutableMap<String, Bitmap?>) {
-        layerBitmapCache.values.forEach { bitmap ->
-            bitmap?.recycle()
-        }
-        layerBitmapCache.clear()
+    fun clearAssetCache(layerAssetCache: OverlayAssetCache) {
+        layerAssetCache.clear()
     }
     
     /**
@@ -166,17 +154,11 @@ object LayerCanvasRenderer {
     fun cleanupRemovedLayers(
         previousLayerIds: Set<String>,
         currentLayerIds: Set<String>,
-        layerBitmapCache: MutableMap<String, Bitmap?>
+        layerAssetCache: OverlayAssetCache
     ) {
         val removedLayerIds = previousLayerIds - currentLayerIds
         if (removedLayerIds.isEmpty()) return
-        val keysToRemove = layerBitmapCache.keys.filter { key ->
-            removedLayerIds.any { id -> key == id || key.startsWith("$id::") }
-        }
-        keysToRemove.forEach { key ->
-            layerBitmapCache[key]?.recycle()
-            layerBitmapCache.remove(key)
-        }
+        layerAssetCache.removeLayerIds(removedLayerIds)
     }
     
     /**

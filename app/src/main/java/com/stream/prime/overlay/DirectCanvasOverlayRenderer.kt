@@ -19,7 +19,7 @@ class DirectCanvasOverlayRenderer(private val context: Context) : BaseFilterRend
     private var layers: List<OverlayLayer> = emptyList()
     private var frameWidth: Int = 0
     private var frameHeight: Int = 0
-    private val layerBitmapCache = mutableMapOf<String, Bitmap?>()
+    private val layerAssetCache = OverlayAssetCache()
     private var compositeBitmap: Bitmap? = null
     private var pixelBuffer: ByteBuffer? = null
 
@@ -99,7 +99,7 @@ class DirectCanvasOverlayRenderer(private val context: Context) : BaseFilterRend
             canvasWidth = frameWidth.toFloat(),
             canvasHeight = frameHeight.toFloat(),
             context = context,
-            layerBitmapCache = layerBitmapCache
+            layerAssetCache = layerAssetCache
         )
         
         // Convert bitmap back to GL texture and display
@@ -150,7 +150,7 @@ class DirectCanvasOverlayRenderer(private val context: Context) : BaseFilterRend
         LayerCanvasRenderer.cleanupRemovedLayers(
             previousLayerIds, 
             currentLayerIds, 
-            layerBitmapCache
+            layerAssetCache
         )
         
         layers = newLayers
@@ -158,11 +158,11 @@ class DirectCanvasOverlayRenderer(private val context: Context) : BaseFilterRend
     }
 
     fun refreshAllLayers() {
-        LayerCanvasRenderer.clearBitmapCache(layerBitmapCache)
+        LayerCanvasRenderer.clearAssetCache(layerAssetCache)
     }
 
     override fun release() {
-        LayerCanvasRenderer.clearBitmapCache(layerBitmapCache)
+        LayerCanvasRenderer.clearAssetCache(layerAssetCache)
         compositeBitmap?.recycle()
         compositeBitmap = null
         pixelBuffer = null

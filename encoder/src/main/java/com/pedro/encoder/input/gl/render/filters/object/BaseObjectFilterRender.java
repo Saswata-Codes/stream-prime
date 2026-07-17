@@ -17,6 +17,7 @@
 package com.pedro.encoder.input.gl.render.filters.object;
 
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.graphics.PointF;
 import android.opengl.GLES20;
 import android.opengl.Matrix;
@@ -68,6 +69,12 @@ abstract public class BaseObjectFilterRender extends BaseFilterRender {
   protected int[] streamObjectTextureId = new int[] { -1 };
   protected TextureLoader textureLoader = new TextureLoader();
   protected StreamObjectBase streamObject;
+  /** False only for renderers that update and reuse the same composition bitmap. */
+  protected boolean recycleStreamObjectBitmapsAfterLoad = true;
+  /** True for same-sized animated compositions to use glTexSubImage2D instead of texture churn. */
+  protected boolean reuseStreamObjectTexture = false;
+  private int streamObjectTextureWidth = -1;
+  private int streamObjectTextureHeight = -1;
   private final Sprite sprite = new Sprite();
   protected float alpha = 1f;
   protected boolean shouldLoad = false;
@@ -105,8 +112,28 @@ abstract public class BaseObjectFilterRender extends BaseFilterRender {
   @Override
   protected void drawFilter() {
     if (shouldLoad) {
-      releaseTexture();
-      streamObjectTextureId = textureLoader.load(streamObject.getBitmaps());
+      Bitmap[] bitmaps = streamObject.getBitmaps();
+      Bitmap bitmap = bitmaps != null && bitmaps.length == 1 ? bitmaps[0] : null;
+      int bitmapWidth = bitmap != null && !bitmap.isRecycled()
+          ? bitmap.getWidth() : streamObject.getWidth();
+      int bitmapHeight = bitmap != null && !bitmap.isRecycled()
+          ? bitmap.getHeight() : streamObject.getHeight();
+      boolean canReuseTexture = reuseStreamObjectTexture
+          && streamObjectTextureId.length == 1
+          && streamObjectTextureId[0] > 0
+          && bitmap != null
+          && !bitmap.isRecycled()
+          && bitmap.getWidth() == streamObjectTextureWidth
+          && bitmap.getHeight() == streamObjectTextureHeight;
+      if (canReuseTexture) {
+        textureLoader.update(streamObjectTextureId[0], bitmap);
+      } else {
+        releaseTexture();
+        streamObjectTextureId = textureLoader.load(
+            bitmaps, recycleStreamObjectBitmapsAfterLoad);
+        streamObjectTextureWidth = bitmapWidth;
+        streamObjectTextureHeight = bitmapHeight;
+      }
       shouldLoad = false;
     }
 
@@ -153,6 +180,8 @@ abstract public class BaseObjectFilterRender extends BaseFilterRender {
   private void releaseTexture() {
     GLES20.glDeleteTextures(streamObjectTextureId.length, streamObjectTextureId, 0);
     streamObjectTextureId = new int[] { -1 };
+    streamObjectTextureWidth = -1;
+    streamObjectTextureHeight = -1;
   }
 
   public void setAlpha(float alpha) {

@@ -2,9 +2,11 @@ package com.stream.prime.overlay
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
 import android.opengl.GLES20
 import android.opengl.Matrix
+import android.os.SystemClock
 import com.pedro.encoder.input.gl.render.BaseRenderOffScreen
 import com.pedro.encoder.input.gl.TextureLoader
 import com.pedro.encoder.input.gl.render.filters.BaseFilterRender
@@ -52,8 +54,17 @@ class ScreenLayoutFilterRender(
   private var uBackgroundSamplerHandle = -1
   private var uHasBackgroundHandle = -1
   private val backgroundImage = ImageStreamObject()
+  private val backgroundAssetCache = OverlayAssetCache()
+  private var backgroundLayers: List<OverlayLayer> = emptyList()
+  private var backgroundContext: Context? = null
+  private var backgroundBitmap: Bitmap? = null
+  private var hasAnimatedBackground = false
+  private var lastBackgroundRequestMs = 0L
+  private var backgroundAnimationCompositor: AsyncOverlayFrameCompositor? = null
   private val textureLoader = TextureLoader()
   private var backgroundTextureId = -1
+  private var backgroundTextureWidth = -1
+  private var backgroundTextureHeight = -1
   @Volatile private var shouldLoadBackground = false
   @Volatile private var hasBackground = false
   private var canvasAspect = 1f
@@ -101,9 +112,42 @@ class ScreenLayoutFilterRender(
   }
 
   override fun drawFilter() {
+    val now = SystemClock.uptimeMillis()
+    val currentBackground = backgroundBitmap
+    if (currentBackground != null) {
+      backgroundAnimationCompositor?.consume(currentBackground)?.let { completed ->
+        backgroundBitmap = completed.bitmap
+        hasAnimatedBackground = completed.hasAnimatedLayers
+        backgroundImage.load(completed.bitmap)
+        shouldLoadBackground = true
+      }
+    }
+    if (
+      hasAnimatedBackground &&
+      now - lastBackgroundRequestMs >= OVERLAY_ANIMATION_FRAME_INTERVAL_MS &&
+      backgroundAnimationCompositor?.request(now) == true
+    ) {
+      lastBackgroundRequestMs = now
+    }
     if (shouldLoadBackground) {
-      releaseBackgroundTexture()
-      backgroundTextureId = textureLoader.load(backgroundImage.bitmaps).firstOrNull() ?: -1
+      val bitmap = backgroundImage.bitmaps.firstOrNull()
+      if (
+        backgroundTextureId > 0 &&
+        bitmap != null &&
+        !bitmap.isRecycled &&
+        bitmap.width == backgroundTextureWidth &&
+        bitmap.height == backgroundTextureHeight
+      ) {
+        textureLoader.update(backgroundTextureId, bitmap)
+      } else {
+        releaseBackgroundTexture()
+        backgroundTextureId = textureLoader.load(
+          backgroundImage.bitmaps,
+          false
+        ).firstOrNull() ?: -1
+        backgroundTextureWidth = bitmap?.width ?: -1
+        backgroundTextureHeight = bitmap?.height ?: -1
+      }
       shouldLoadBackground = false
     }
     val sourcePreset = if (landscapeSource) ScreenPreset.LANDSCAPE else ScreenPreset.PORTRAIT
@@ -240,9 +284,16 @@ class ScreenLayoutFilterRender(
 
   fun setCanvasSize(width: Int, height: Int) {
     if (width > 0 && height > 0) {
+      val sizeChanged = canvasWidth != width || canvasHeight != height
       canvasWidth = width
       canvasHeight = height
       canvasAspect = width.toFloat() / height.toFloat()
+      if (sizeChanged && backgroundBitmap != null) {
+        closeBackgroundAnimationCompositor()
+        backgroundBitmap?.takeIf { !it.isRecycled }?.recycle()
+        backgroundBitmap = null
+        if (backgroundLayers.isNotEmpty()) renderBackgroundFrame(SystemClock.uptimeMillis())
+      }
     }
   }
 
@@ -260,6 +311,15 @@ class ScreenLayoutFilterRender(
   }
 
   fun setBackgroundImage(bitmap: Bitmap?) {
+    closeBackgroundAnimationCompositor()
+    backgroundLayers = emptyList()
+    backgroundContext = null
+    hasAnimatedBackground = false
+    backgroundAssetCache.clear()
+    if (backgroundBitmap !== bitmap) {
+      backgroundBitmap?.takeIf { !it.isRecycled }?.recycle()
+    }
+    backgroundBitmap = null
     hasBackground = bitmap != null
     if (bitmap != null) {
       backgroundImage.load(bitmap)
@@ -267,15 +327,89 @@ class ScreenLayoutFilterRender(
     }
   }
 
+  /**
+   * Uses the same layer renderer for content below Screen. GIF backgrounds are recomposed only
+   * when their capped animation tick is due, while static backgrounds remain a one-time texture.
+   */
+  fun setBackgroundLayers(context: Context, layers: List<OverlayLayer>) {
+    closeBackgroundAnimationCompositor()
+    backgroundContext = context.applicationContext
+    backgroundLayers = layers
+    backgroundAssetCache.retainLayerIds(layers.mapTo(mutableSetOf()) { it.id })
+    hasBackground = layers.isNotEmpty()
+    if (layers.isEmpty()) {
+      hasAnimatedBackground = false
+      return
+    }
+    val now = SystemClock.uptimeMillis()
+    renderBackgroundFrame(now)
+    lastBackgroundRequestMs = now
+  }
+
+  private fun renderBackgroundFrame(frameTimeMs: Long) {
+    val context = backgroundContext ?: return
+    if (canvasWidth <= 0 || canvasHeight <= 0 || backgroundLayers.isEmpty()) return
+    var bitmap = backgroundBitmap
+    if (bitmap == null || bitmap.isRecycled || bitmap.width != canvasWidth || bitmap.height != canvasHeight) {
+      bitmap?.takeIf { !it.isRecycled }?.recycle()
+      bitmap = LayerCanvasRenderer.createCanvasBitmap(canvasWidth, canvasHeight) ?: return
+      backgroundBitmap = bitmap
+    }
+    val layerSnapshot = backgroundLayers.toList()
+    hasAnimatedBackground = renderBackgroundInto(bitmap, context, layerSnapshot, frameTimeMs)
+    backgroundImage.load(bitmap)
+    shouldLoadBackground = true
+    if (hasAnimatedBackground) {
+      val backBuffer = LayerCanvasRenderer.createCanvasBitmap(canvasWidth, canvasHeight)
+      if (backBuffer != null) {
+        backgroundAnimationCompositor = AsyncOverlayFrameCompositor(
+          threadName = "OverlayGifBackground",
+          initialBackBuffer = backBuffer
+        ) { target, timeMs ->
+          renderBackgroundInto(target, context, layerSnapshot, timeMs)
+        }
+      }
+    }
+  }
+
+  private fun renderBackgroundInto(
+    target: Bitmap,
+    context: Context,
+    layerSnapshot: List<OverlayLayer>,
+    frameTimeMs: Long
+  ): Boolean {
+    return LayerCanvasRenderer.renderLayersOnCanvas(
+      canvas = Canvas(target),
+      layers = layerSnapshot,
+      canvasWidth = canvasWidth.toFloat(),
+      canvasHeight = canvasHeight.toFloat(),
+      context = context,
+      layerAssetCache = backgroundAssetCache,
+      frameTimeMs = frameTimeMs
+    ).hasAnimatedLayers
+  }
+
+  private fun closeBackgroundAnimationCompositor() {
+    backgroundAnimationCompositor?.close()
+    backgroundAnimationCompositor = null
+  }
+
   private fun releaseBackgroundTexture() {
     if (backgroundTextureId > 0) GLES20.glDeleteTextures(1, intArrayOf(backgroundTextureId), 0)
     backgroundTextureId = -1
+    backgroundTextureWidth = -1
+    backgroundTextureHeight = -1
   }
 
   override fun release() {
+    closeBackgroundAnimationCompositor()
     if (program > 0) GLES20.glDeleteProgram(program)
     releaseBackgroundTexture()
+    backgroundAssetCache.clear()
     backgroundImage.recycle()
+    backgroundBitmap = null
+    backgroundLayers = emptyList()
+    backgroundContext = null
     program = -1
   }
 

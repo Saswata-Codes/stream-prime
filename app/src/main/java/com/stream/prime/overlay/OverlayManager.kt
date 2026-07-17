@@ -1,16 +1,14 @@
 package com.stream.prime.overlay
 
-import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
-import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
-import java.io.FileDescriptor
+import com.stream.prime.settings.SettingsManager
 
 enum class OverlayLayerType {
   IMAGE,
@@ -25,6 +23,8 @@ data class OverlayLayer(
   // Nullable only for Gson compatibility with projects saved before layer types existed.
   val type: OverlayLayerType? = OverlayLayerType.IMAGE,
   val imageUri: String = "",
+  /** True for animated GIF image layers. Defaults false for saved projects from older builds. */
+  val animated: Boolean = false,
   val text: String = "",
   val textColor: String = "#FFFFFF",
   val backgroundColor: String = "#00000000",
@@ -211,7 +211,16 @@ object OverlayManager {
   fun save(context: Context, config: OverlayConfig) {
     val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
     val layersJson = gson.toJson(config.layers)
-    val screenLayout = config.screenLayout.normalized()
+    val portraitBaseSize = CaptureOrientation.contentSize(
+      streamCanvasAspect(context),
+      ScreenPreset.PORTRAIT,
+      config.portraitScreenFitMode,
+      CaptureDisplayAspect.landscapeAspect(context)
+    )
+    val screenLayout = config.screenLayout.normalized(
+      portraitBaseSize.first,
+      portraitBaseSize.second
+    )
     val landscapeBaseSize = CaptureOrientation.contentSize(
       streamCanvasAspect(context),
       ScreenPreset.LANDSCAPE,
@@ -258,7 +267,11 @@ object OverlayManager {
           enabled = prefs.getBoolean(KEY_ENABLED, false),
           layers = layers,
           screenPreset = loadScreenPreset(prefs),
-          screenLayout = loadScreenLayout(prefs),
+          screenLayout = loadScreenLayout(
+            context,
+            prefs,
+            loadFitMode(prefs, KEY_PORTRAIT_SCREEN_FIT_MODE)
+          ),
           landscapeScreenLayout = loadLandscapeScreenLayout(
             context,
             prefs,
@@ -297,7 +310,11 @@ object OverlayManager {
         enabled = prefs.getBoolean(KEY_ENABLED, false),
         layers = listOf(legacyLayer),
         screenPreset = loadScreenPreset(prefs),
-        screenLayout = loadScreenLayout(prefs),
+        screenLayout = loadScreenLayout(
+          context,
+          prefs,
+          loadFitMode(prefs, KEY_PORTRAIT_SCREEN_FIT_MODE)
+        ),
         landscapeScreenLayout = loadLandscapeScreenLayout(
           context,
           prefs,
@@ -318,7 +335,11 @@ object OverlayManager {
       enabled = prefs.getBoolean(KEY_ENABLED, false),
       layers = emptyList(),
       screenPreset = loadScreenPreset(prefs),
-      screenLayout = loadScreenLayout(prefs),
+      screenLayout = loadScreenLayout(
+        context,
+        prefs,
+        loadFitMode(prefs, KEY_PORTRAIT_SCREEN_FIT_MODE)
+      ),
       landscapeScreenLayout = loadLandscapeScreenLayout(
         context,
         prefs,
@@ -335,13 +356,26 @@ object OverlayManager {
     )
   }
 
-  private fun loadScreenLayout(prefs: android.content.SharedPreferences): ScreenLayout {
+  private fun loadScreenLayout(
+    context: Context,
+    prefs: android.content.SharedPreferences,
+    fitMode: ScreenFitMode
+  ): ScreenLayout {
+    if (!prefs.contains(KEY_SCREEN_POSITION_X)) {
+      return defaultScreenLayout(context, ScreenPreset.PORTRAIT, fitMode)
+    }
+    val baseSize = CaptureOrientation.contentSize(
+      streamCanvasAspect(context),
+      ScreenPreset.PORTRAIT,
+      fitMode,
+      CaptureDisplayAspect.landscapeAspect(context)
+    )
     return ScreenLayout(
       positionXPct = prefs.getFloat(KEY_SCREEN_POSITION_X, 0f),
       positionYPct = prefs.getFloat(KEY_SCREEN_POSITION_Y, 0f),
       scalePct = prefs.getFloat(KEY_SCREEN_SCALE, 100f),
       rotationDegrees = prefs.getFloat(KEY_SCREEN_ROTATION, 0f)
-    ).normalized()
+    ).normalized(baseSize.first, baseSize.second)
   }
 
   private fun loadLandscapeScreenLayout(
@@ -350,12 +384,7 @@ object OverlayManager {
     fitMode: ScreenFitMode
   ): ScreenLayout {
     if (!prefs.contains(KEY_LANDSCAPE_SCREEN_POSITION_X)) {
-      return CaptureOrientation.defaultLayout(
-        streamCanvasAspect(context),
-        ScreenPreset.LANDSCAPE,
-        fitMode,
-        CaptureDisplayAspect.landscapeAspect(context)
-      )
+      return defaultScreenLayout(context, ScreenPreset.LANDSCAPE, fitMode)
     }
     val baseSize = CaptureOrientation.contentSize(
       streamCanvasAspect(context),
@@ -393,11 +422,31 @@ object OverlayManager {
   }
 
   private fun streamCanvasAspect(context: Context): Float {
-    val prefs = context.getSharedPreferences("StreamSettings", Context.MODE_PRIVATE)
-    val width = prefs.getInt("vertical_width", 720).coerceAtLeast(1)
-    val height = prefs.getInt("vertical_height", 1280).coerceAtLeast(1)
+    val vertical = SettingsManager.getStreamingMode(context) == "Vertical"
+    val width = if (vertical) {
+      SettingsManager.getVerticalWidth(context)
+    } else {
+      SettingsManager.getLandscapeWidth(context)
+    }.coerceAtLeast(1)
+    val height = if (vertical) {
+      SettingsManager.getVerticalHeight(context)
+    } else {
+      SettingsManager.getLandscapeHeight(context)
+    }.coerceAtLeast(1)
     return width.toFloat() / height.toFloat()
   }
+
+  /** Uses the exact same placement math as the canvas Reset action. */
+  fun defaultScreenLayout(
+    context: Context,
+    preset: ScreenPreset,
+    fitMode: ScreenFitMode
+  ): ScreenLayout = CaptureOrientation.defaultLayout(
+    streamCanvasAspect(context),
+    preset,
+    fitMode,
+    CaptureDisplayAspect.landscapeAspect(context)
+  )
 
   fun clear(context: Context) {
     context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply()
@@ -447,6 +496,17 @@ object OverlayManager {
       null
     }
   }
+
+  fun isAnimatedImage(context: Context, uriString: String): Boolean =
+    OverlayMediaDetector.isGif(context, uriString)
+
+  fun imageFileSize(context: Context, uri: Uri): Long = runCatching {
+    context.contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+      if (!cursor.moveToFirst()) return@use -1L
+      val index = cursor.getColumnIndex(OpenableColumns.SIZE)
+      if (index >= 0 && !cursor.isNull(index)) cursor.getLong(index) else -1L
+    } ?: -1L
+  }.getOrDefault(-1L)
 
   fun persistUriPermission(context: Context, uri: Uri, intentFlags: Int) {
     try {

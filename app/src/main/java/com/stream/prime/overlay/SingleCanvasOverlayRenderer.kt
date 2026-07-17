@@ -18,7 +18,7 @@ class SingleCanvasOverlayRenderer(private val context: Context) : BaseFilterRend
     private var layers: List<OverlayLayer> = emptyList()
     private var canvasWidth: Int = 0
     private var canvasHeight: Int = 0
-    private val layerBitmapCache = mutableMapOf<String, Bitmap?>()
+    private val layerAssetCache = OverlayAssetCache()
     private var overlayBitmap: Bitmap? = null
     private var overlayTextureId = IntArray(1)
     
@@ -164,7 +164,7 @@ class SingleCanvasOverlayRenderer(private val context: Context) : BaseFilterRend
             canvasWidth = canvasWidth.toFloat(),
             canvasHeight = canvasHeight.toFloat(),
             context = context,
-            layerBitmapCache = layerBitmapCache
+            layerAssetCache = layerAssetCache
         )
         
         // Upload bitmap to GL texture
@@ -208,7 +208,7 @@ class SingleCanvasOverlayRenderer(private val context: Context) : BaseFilterRend
         LayerCanvasRenderer.cleanupRemovedLayers(
             previousLayerIds, 
             currentLayerIds, 
-            layerBitmapCache
+            layerAssetCache
         )
         
         layers = newLayers
@@ -216,11 +216,11 @@ class SingleCanvasOverlayRenderer(private val context: Context) : BaseFilterRend
     }
 
     fun refreshAllLayers() {
-        LayerCanvasRenderer.clearBitmapCache(layerBitmapCache)
+        LayerCanvasRenderer.clearAssetCache(layerAssetCache)
     }
 
     override fun release() {
-        LayerCanvasRenderer.clearBitmapCache(layerBitmapCache)
+        LayerCanvasRenderer.clearAssetCache(layerAssetCache)
         overlayBitmap?.recycle()
         overlayBitmap = null
         

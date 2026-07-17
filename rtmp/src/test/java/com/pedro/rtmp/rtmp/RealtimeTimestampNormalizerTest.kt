@@ -32,6 +32,18 @@ class RealtimeTimestampNormalizerTest {
   }
 
   @Test
+  fun `aac callback bursts preserve sample cadence instead of collapsing to wall time`() {
+    var nowUs = 10_000_000L
+    val normalizer = RealtimeTimestampNormalizer { nowUs }
+
+    assertEquals(0L, normalizer.normalize(4_000_000L, MediaFrame.Type.AUDIO))
+    nowUs += 200L
+    assertEquals(21_333L, normalizer.normalize(4_021_333L, MediaFrame.Type.AUDIO))
+    nowUs += 200L
+    assertEquals(42_666L, normalizer.normalize(4_042_666L, MediaFrame.Type.AUDIO))
+  }
+
+  @Test
   fun `reset starts a fresh zero based timeline`() {
     var nowUs = 1_000L
     val normalizer = RealtimeTimestampNormalizer { nowUs }

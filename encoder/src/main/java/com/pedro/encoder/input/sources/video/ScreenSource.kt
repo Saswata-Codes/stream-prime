@@ -26,7 +26,6 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.view.Surface
 import androidx.annotation.RequiresApi
-import com.pedro.encoder.input.sources.MediaProjectionHandler
 import com.pedro.encoder.input.sources.OrientationConfig
 import com.pedro.encoder.input.sources.OrientationForced
 
@@ -36,7 +35,7 @@ import com.pedro.encoder.input.sources.OrientationForced
 @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
 class ScreenSource @JvmOverloads constructor(
   context: Context,
-  mediaProjection: MediaProjection,
+  private val mediaProjection: MediaProjection,
   mediaProjectionCallback: MediaProjection.Callback? = null,
   virtualDisplayCallback: VirtualDisplay.Callback? = null
 ): VideoSource() {
@@ -44,13 +43,13 @@ class ScreenSource @JvmOverloads constructor(
   private val TAG = "ScreenSource"
   private var virtualDisplay: VirtualDisplay? = null
   private var handlerThread = HandlerThread(TAG)
-  private val mediaProjectionCallback = mediaProjectionCallback ?: object : MediaProjection.Callback() {}
+  private val mediaProjectionCallback = mediaProjectionCallback ?: object : MediaProjection.Callback() {
+    override fun onStop() {
+      stop()
+    }
+  }
   private val virtualDisplayCallback = virtualDisplayCallback ?: object : VirtualDisplay.Callback() {}
   private val dpi = context.resources.displayMetrics.densityDpi
-
-  init {
-      MediaProjectionHandler.mediaProjection = mediaProjection
-  }
 
   override fun create(width: Int, height: Int, fps: Int, rotation: Int): Boolean {
     return checkResolutionSupported(width, height)
@@ -67,8 +66,8 @@ class ScreenSource @JvmOverloads constructor(
       if (shouldRotate) surfaceTexture.setDefaultBufferSize(height, width)
       handlerThread = HandlerThread(TAG)
       handlerThread.start()
-      MediaProjectionHandler.mediaProjection?.registerCallback(mediaProjectionCallback, Handler(handlerThread.looper))
-      virtualDisplay = MediaProjectionHandler.mediaProjection?.createVirtualDisplay(TAG,
+      mediaProjection.registerCallback(mediaProjectionCallback, Handler(handlerThread.looper))
+      virtualDisplay = mediaProjection.createVirtualDisplay(TAG,
         displayWidth, displayHeight, dpi, flags,
         Surface(surfaceTexture), virtualDisplayCallback, Handler(handlerThread.looper)
       )
@@ -87,7 +86,7 @@ class ScreenSource @JvmOverloads constructor(
   }
 
   override fun release() {
-    MediaProjectionHandler.mediaProjection?.unregisterCallback(mediaProjectionCallback)
+    runCatching { mediaProjection.unregisterCallback(mediaProjectionCallback) }
   }
 
   override fun isRunning(): Boolean = virtualDisplay != null

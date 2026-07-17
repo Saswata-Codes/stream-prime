@@ -33,7 +33,6 @@ import com.pedro.encoder.Frame
 import com.pedro.encoder.input.audio.CustomAudioEffect
 import com.pedro.encoder.input.audio.GetMicrophoneData
 import com.pedro.encoder.input.audio.MicrophoneManager
-import com.pedro.encoder.input.sources.MediaProjectionHandler
 
 /**
  * Mix microphone and internal audio sources in one source to allow send both at the same time.
@@ -53,9 +52,9 @@ import com.pedro.encoder.input.sources.MediaProjectionHandler
  */
 @RequiresApi(Build.VERSION_CODES.Q)
 class MixAudioSource(
-    mediaProjection: MediaProjection,
+    private val mediaProjection: MediaProjection,
     mediaProjectionCallback: MediaProjection.Callback? = null,
-    private val microphoneAudioSource: Int = MediaRecorder.AudioSource.DEFAULT,
+    private val microphoneAudioSource: Int = MediaRecorder.AudioSource.MIC,
     context: Context? = null
 ): AudioSource(), GetMicrophoneData {
 
@@ -63,21 +62,19 @@ class MixAudioSource(
     private var handlerThread = HandlerThread(TAG)
     private val microphone = MicrophoneManager(this)
     private var preferredDevice: AudioDeviceInfo? = null
-    private val mediaProjectionCallback = mediaProjectionCallback ?: object : MediaProjection.Callback() {}
+    private val mediaProjectionCallback = mediaProjectionCallback ?: object : MediaProjection.Callback() {
+        override fun onStop() {
+            stop()
+        }
+    }
     private var respectSystemVolume = true
     private var context: Context? = context
 
-    init {
-        MediaProjectionHandler.mediaProjection = mediaProjection
-    }
-
     override fun create(sampleRate: Int, isStereo: Boolean, echoCanceler: Boolean, noiseSuppressor: Boolean): Boolean {
-        //create microphone to confirm valid parameters
-        val result = microphone.createMicrophone(microphoneAudioSource, sampleRate, isStereo, echoCanceler, noiseSuppressor)
-        if (!result) {
-            throw IllegalArgumentException("Some parameters specified are not valid");
-        }
-        return true
+        // AudioSource.init already stores these parameters. Allocate both AudioRecords together in
+        // start(), after the current MediaProjection is ready; allocating a validation microphone
+        // here leaked that AudioRecord when start() created the real mixed pair.
+        return sampleRate > 0
     }
 
     fun setPreferredDevice(deviceInfo: AudioDeviceInfo?): Boolean {
@@ -90,19 +87,38 @@ class MixAudioSource(
         if (!isRunning()) {
             handlerThread = HandlerThread(TAG)
             handlerThread.start()
-            MediaProjectionHandler.mediaProjection?.registerCallback(mediaProjectionCallback, Handler(handlerThread.looper))
-            val config = AudioPlaybackCaptureConfiguration.Builder(MediaProjectionHandler.mediaProjection!!)
+            mediaProjection.registerCallback(mediaProjectionCallback, Handler(handlerThread.looper))
+            val config = AudioPlaybackCaptureConfiguration.Builder(mediaProjection)
                 .addMatchingUsage(AudioAttributes.USAGE_MEDIA)
                 .addMatchingUsage(AudioAttributes.USAGE_GAME)
                 .addMatchingUsage(AudioAttributes.USAGE_UNKNOWN).build()
-            val result = microphone.createMixMicrophone(microphoneAudioSource, config, sampleRate, isStereo, echoCanceler, noiseSuppressor)
+            // Keep the physical microphone on the caller-selected raw capture path. DEFAULT plus
+            // AEC/NS can select a vendor voice-processing route; on affected Unisoc stacks that
+            // route change invalidates the simultaneous REMOTE_SUBMIX AudioRecord
+            // (restoreRecord_l -22), which can also tear down the MediaProjection session. Device
+            // playback is already-rendered PCM, so mix both raw tracks in software and leave
+            // voice-call DSP disabled here.
+            val result = microphone.createMixMicrophone(
+                microphoneAudioSource,
+                config,
+                sampleRate,
+                isStereo,
+                false,
+                false
+            )
             if (!result) {
+                microphone.stop()
                 throw IllegalArgumentException("Failed to create microphone audio source")
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 microphone.setPreferredDevice(preferredDevice)
             }
             microphone.start()
+            android.util.Log.i(
+                TAG,
+                "Mixed capture started with microphone source=$microphoneAudioSource and " +
+                    "playback capture; voice DSP disabled"
+            )
         }
     }
 
@@ -116,7 +132,9 @@ class MixAudioSource(
 
     override fun isRunning(): Boolean = microphone.isRunning
 
-    override fun release() {}
+    override fun release() {
+        runCatching { mediaProjection.unregisterCallback(mediaProjectionCallback) }
+    }
 
     override fun inputPCMData(frame: Frame) {
         getMicrophoneData?.inputPCMData(frame)

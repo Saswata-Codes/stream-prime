@@ -16,6 +16,8 @@
 
 package com.stream.prime.screen
 
+import android.annotation.SuppressLint
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
@@ -23,21 +25,26 @@ import android.content.Intent
 import android.media.MediaCodecInfo
 import android.media.AudioManager
 import android.media.projection.MediaProjection
+import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
 import android.hardware.display.DisplayManager
 import android.os.Build
+import android.os.Binder
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Log
 import android.view.Display
 import android.view.Surface
 import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import com.pedro.common.ConnectChecker
+import com.pedro.encoder.TimestampMode
 import com.pedro.encoder.input.sources.audio.AudioSource
 import com.pedro.encoder.input.sources.audio.InternalAudioSource
 import com.pedro.encoder.input.sources.audio.MicrophoneSource
 import com.pedro.encoder.input.sources.audio.MixAudioSource
 import com.pedro.encoder.input.sources.audio.NoAudioSource
+import com.stream.prime.audio.MicrophoneCapturePolicy
 import com.stream.prime.audio.PristineAudioSource
 import com.pedro.encoder.input.sources.video.NoVideoSource
 import com.pedro.encoder.input.sources.video.ScreenSource
@@ -47,9 +54,9 @@ import com.stream.prime.R
 import com.stream.prime.utils.PathUtils
 import com.stream.prime.utils.toast
 import com.stream.prime.settings.SettingsManager
+import com.stream.prime.settings.VoiceChatCompatibilityPolicy
+import com.stream.prime.accessibility.StreamAccessibilityService
 
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -57,20 +64,20 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.IntentFilter
 import android.content.BroadcastReceiver
+import android.content.SharedPreferences
 import com.pedro.encoder.input.audio.MicrophoneManager
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE
 import androidx.core.content.ContextCompat
 import android.os.Handler
 import android.os.Looper
-import com.stream.prime.accessibility.StreamAccessibilityService
 import com.pedro.encoder.input.gl.render.filters.`object`.ImageObjectFilterRender
 import com.pedro.encoder.utils.gl.TranslateTo
 import com.stream.prime.overlay.OverlayManager
 import com.stream.prime.overlay.LayeredOverlayRenderer
 import com.stream.prime.overlay.ScreenLayoutFilterRender
-import com.stream.prime.overlay.LayerCanvasRenderer
 import com.stream.prime.overlay.OverlayLayer
 import com.stream.prime.overlay.OverlayLayerOrdering
 import com.stream.prime.overlay.OverlayLayerType
@@ -91,13 +98,94 @@ class ScreenService: Service(), ConnectChecker {
     private const val ACTION_STOP_STREAM = "com.stream.prime.STOP_STREAM"
     private const val ACTION_TOGGLE_MIC = "com.stream.prime.TOGGLE_MIC"
     private const val ACTION_APPLY_OVERLAY = "com.stream.prime.APPLY_OVERLAY"
+    private const val ACTION_ARM_CAPTURE_FOREGROUND =
+      "com.stream.prime.ARM_CAPTURE_FOREGROUND"
+    const val ACTION_RECORDING_STATE_CHANGED = "com.stream.prime.RECORDING_STATE_CHANGED"
+    const val EXTRA_IS_RECORDING = "is_recording"
+    const val ACTION_MICROPHONE_STATE_CHANGED =
+      "com.stream.prime.MICROPHONE_STATE_CHANGED"
+    const val EXTRA_MICROPHONE_MUTED = "microphone_muted"
+    const val EXTRA_MICROPHONE_VOLUME = "microphone_volume"
+    const val EXTRA_MICROPHONE_RESTORE_VOLUME = "microphone_restore_volume"
+
+    private data class StartupCaptureRequest(
+      val resultCode: Int,
+      val data: Intent,
+      val completion: (Boolean) -> Unit
+    )
+    private var startupCaptureRequest: StartupCaptureRequest? = null
+
+    /** Build the consent intent without creating ScreenService as a background/bound service. */
+    fun createCaptureIntent(context: Context): Intent {
+      val manager = context.applicationContext.getSystemService(
+        Context.MEDIA_PROJECTION_SERVICE
+      ) as MediaProjectionManager
+      return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        manager.createScreenCaptureIntent(MediaProjectionConfig.createConfigForDefaultDisplay())
+      } else {
+        manager.createScreenCaptureIntent()
+      }
+    }
+
+    /**
+     * Start capture only after consent. On the first run this creates ScreenService directly as
+     * the typed foreground service; it never promotes an older bound/background service record.
+     */
+    fun startCapture(
+      context: Context,
+      resultCode: Int,
+      data: Intent,
+      completion: (Boolean) -> Unit
+    ) {
+      INSTANCE?.let { service ->
+        service.prepareStream(resultCode, data, completion)
+        return
+      }
+
+      startupCaptureRequest?.completion?.invoke(false)
+      startupCaptureRequest = StartupCaptureRequest(resultCode, data, completion)
+      try {
+        ContextCompat.startForegroundService(
+          context.applicationContext,
+          Intent(context.applicationContext, ScreenService::class.java).apply {
+            action = ACTION_ARM_CAPTURE_FOREGROUND
+          }
+        )
+        Log.d(TAG, "Fresh capture foreground service requested after projection consent")
+      } catch (error: RuntimeException) {
+        Log.e(TAG, "Unable to create capture foreground service", error)
+        startupCaptureRequest = null
+        completion(false)
+      }
+    }
+
+    private fun takeStartupCaptureRequest(): StartupCaptureRequest? {
+      return startupCaptureRequest.also { startupCaptureRequest = null }
+    }
   }
 
   private var notificationManager: NotificationManager? = null
+  private val localBinder = Binder()
+  private var captureWakeLock: PowerManager.WakeLock? = null
+  private var sessionProtectionActive = false
+  /**
+   * A MediaProjection grant is tied to one uninterrupted mediaProjection foreground-service
+   * session. Repeated startForeground() calls are unnecessary notification updates and some
+   * vendor ActivityManager implementations briefly publish an empty service-type mask while
+   * processing them, which makes MediaProjectionManager revoke the active grant.
+   */
+  private var captureForegroundActive = false
+  private data class PendingCaptureRequest(
+    val resultCode: Int,
+    val data: Intent,
+    val completion: (Boolean) -> Unit
+  )
+  private var pendingCaptureRequest: PendingCaptureRequest? = null
   private lateinit var genericStream: GenericStream
   
   fun getGenericStream(): GenericStream = genericStream
   private var mediaProjection: MediaProjection? = null
+  private var mediaProjectionCallback: MediaProjection.Callback? = null
   private val mediaProjectionManager: MediaProjectionManager by lazy {
     applicationContext.getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
   }
@@ -152,13 +240,100 @@ class ScreenService: Service(), ConnectChecker {
   // Noise Gate Filter for hissing suppression
 
   private var micVolume = 100
+  private var micVolumeBeforeMute = 100
   private var deviceVolume = 100
   private var lastBitrate: Long = 0
   private var streamStartTime: Long = 0
+  private var recordingStartTime: Long = 0
+  private var captureSessionStartedAt: Long = 0
   private val PREFS_NAME = "StreamAudioPrefs"
   private val KEY_MIC_VOLUME = "mic_volume"
+  private val KEY_MIC_VOLUME_BEFORE_MUTE = "mic_volume_before_mute"
   private val KEY_DEVICE_VOLUME = "device_volume"
+  private val KEY_MIC_MUTED = "mic_muted"
   private val KEY_STREAM_START_TIME = "stream_start_time"
+
+  private fun compatibilityMicrophoneSource(): Int {
+    return MicrophoneCapturePolicy.sourceForGameVoiceChatCompatibility(
+      SettingsManager.isGameVoiceChatCompatibilityEnabled(this)
+    )
+  }
+
+  private fun createPristineAudioSource(): PristineAudioSource {
+    return PristineAudioSource(this, compatibilityMicrophoneSource())
+  }
+
+  @RequiresApi(Build.VERSION_CODES.Q)
+  private fun createMixedAudioSource(projection: MediaProjection): MixAudioSource {
+    return MixAudioSource(
+      projection,
+      microphoneAudioSource = compatibilityMicrophoneSource(),
+      context = this
+    )
+  }
+
+  private fun activateVoiceChatCompatibilityForCapture(): Boolean {
+    val requestedEnabled = SettingsManager.isGameVoiceChatCompatibilityEnabled(this)
+    val state = VoiceChatCompatibilityPolicy.resolve(
+      requestedEnabled = requestedEnabled,
+      accessibilityEnabled = StreamAccessibilityService.isEnabled(this),
+      accessibilityConnected = StreamAccessibilityService.isConnected(this)
+    )
+    if (!state.enabled) {
+      StreamAccessibilityService.setCaptureActive(this, false)
+      if (requestedEnabled) {
+        // The system permission was removed outside Stream Prime. Clear the stale switch and
+        // continue with normal microphone behavior instead of repeatedly rejecting capture.
+        SettingsManager.setGameVoiceChatCompatibilityEnabled(this, false)
+        Log.w(TAG, "Mic Share disconnected; compatibility mode automatically disabled")
+        Handler(Looper.getMainLooper()).post {
+          toast(getString(R.string.game_voice_chat_compatibility_auto_disabled))
+        }
+      }
+      return true
+    }
+
+    val activated = StreamAccessibilityService.setCaptureActive(this, true)
+    if (!activated) {
+      val message = getString(R.string.mic_share_not_ready)
+      Log.e(TAG, message)
+      Handler(Looper.getMainLooper()).post { toast(message) }
+      callback?.onConnectionFailed(message)
+      return false
+    }
+
+    Log.i(
+      TAG,
+      "Game voice-chat microphone compatibility active: accessibility capture identity + " +
+        "VOICE_RECOGNITION source"
+    )
+    return true
+  }
+
+  /** Apply a settings change immediately when the settings screen is opened during capture. */
+  fun refreshGameVoiceChatCompatibilityMode() {
+    val captureActive = genericStream.isStreaming || genericStream.isRecording
+    if (!captureActive) {
+      StreamAccessibilityService.setCaptureActive(this, false)
+      return
+    }
+
+    if (!activateVoiceChatCompatibilityForCapture()) return
+
+    try {
+      when (genericStream.audioSource) {
+        is MixAudioSource -> mediaProjection?.let {
+          genericStream.changeAudioSource(createMixedAudioSource(it))
+        }
+        is PristineAudioSource -> genericStream.changeAudioSource(createPristineAudioSource())
+        // InternalAudioSource means the user explicitly muted the microphone; preserve that.
+      }
+      applyStreamAudioLevels()
+      Log.i(TAG, "Game voice-chat compatibility audio source refreshed")
+    } catch (error: RuntimeException) {
+      Log.e(TAG, "Unable to refresh game voice-chat audio source", error)
+    }
+  }
 
   // --- RTMP auto-reconnect state ---
   private var currentEndpoint: String? = null
@@ -251,9 +426,14 @@ class ScreenService: Service(), ConnectChecker {
   private fun loadVolumeSettings() {
       try {
           val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-          micVolume = prefs.getInt(KEY_MIC_VOLUME, 100)
+          applyMicrophoneState(readStoredMicrophoneState(prefs))
           deviceVolume = prefs.getInt(KEY_DEVICE_VOLUME, 100)
-          Log.d(TAG, "Volume settings loaded - Mic: $micVolume%, Device: $deviceVolume%")
+          persistMicrophoneState(prefs)
+          Log.d(
+            TAG,
+            "Audio settings loaded - Mic: $micVolume%, restore: $micVolumeBeforeMute%, " +
+              "Device: $deviceVolume%, Mic muted: $isMicrophoneMuted"
+          )
           
           // Apply the loaded settings to the audio sources if streaming
           if (::genericStream.isInitialized && genericStream.isStreaming) {
@@ -264,8 +444,46 @@ class ScreenService: Service(), ConnectChecker {
           Log.e(TAG, "Error loading volume settings: ${e.message}")
           // Use defaults if loading fails
           micVolume = 100
+          micVolumeBeforeMute = 100
           deviceVolume = 100
+          isMicrophoneMuted = false
       }
+  }
+
+  private fun readStoredMicrophoneState(
+    prefs: SharedPreferences
+  ): MicrophoneMuteVolumePolicy.State {
+    return MicrophoneMuteVolumePolicy.fromStored(
+      volumePercent = prefs.getInt(KEY_MIC_VOLUME, 100),
+      restorePercent = if (prefs.contains(KEY_MIC_VOLUME_BEFORE_MUTE)) {
+        prefs.getInt(KEY_MIC_VOLUME_BEFORE_MUTE, 100)
+      } else {
+        null
+      },
+      muted = prefs.getBoolean(KEY_MIC_MUTED, false)
+    )
+  }
+
+  private fun currentMicrophoneState(): MicrophoneMuteVolumePolicy.State {
+    return MicrophoneMuteVolumePolicy.fromStored(
+      volumePercent = micVolume,
+      restorePercent = micVolumeBeforeMute,
+      muted = isMicrophoneMuted
+    )
+  }
+
+  private fun applyMicrophoneState(state: MicrophoneMuteVolumePolicy.State) {
+    micVolume = state.volumePercent
+    micVolumeBeforeMute = state.restorePercent
+    isMicrophoneMuted = state.muted
+  }
+
+  private fun persistMicrophoneState(prefs: SharedPreferences) {
+    prefs.edit()
+      .putInt(KEY_MIC_VOLUME, micVolume)
+      .putInt(KEY_MIC_VOLUME_BEFORE_MUTE, micVolumeBeforeMute)
+      .putBoolean(KEY_MIC_MUTED, isMicrophoneMuted)
+      .apply()
   }
 
   /**
@@ -331,9 +549,15 @@ class ScreenService: Service(), ConnectChecker {
           val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
           prefs.edit()
               .putInt(KEY_MIC_VOLUME, micVolume)
+              .putInt(KEY_MIC_VOLUME_BEFORE_MUTE, micVolumeBeforeMute)
               .putInt(KEY_DEVICE_VOLUME, deviceVolume)
+              .putBoolean(KEY_MIC_MUTED, isMicrophoneMuted)
               .apply()
-          Log.d(TAG, "Volume settings saved - Mic: $micVolume%, Device: $deviceVolume%")
+          Log.d(
+            TAG,
+            "Audio settings saved - Mic: $micVolume%, restore: $micVolumeBeforeMute%, " +
+              "Device: $deviceVolume%, Mic muted: $isMicrophoneMuted"
+          )
       } catch (e: Exception) {
           Log.e(TAG, "Error saving volume settings: ${e.message}")
       }
@@ -375,7 +599,10 @@ class ScreenService: Service(), ConnectChecker {
     Log.d("ScreenService", "Mode: ${getSharedPreferences("StreamSettings", 0).getString("streaming_mode", "Auto")}")
     Log.d("ScreenService", "Width: $width, Height: $height, FPS: $fps, Bitrate: $vBitrate, Rotation: $rotation")
     
-    genericStream = GenericStream(baseContext, this, NoVideoSource(), PristineAudioSource(this)).apply {
+    genericStream = GenericStream(baseContext, this, NoVideoSource(), createPristineAudioSource()).apply {
+      // Video follows the capture clock. Audio follows the submitted PCM sample count so RTMP AAC
+      // timestamps stay at a stable 1024-sample cadence even when codec callbacks arrive in bursts.
+      setTimestampMode(TimestampMode.CLOCK, TimestampMode.BUFFER)
       //This is important to keep a constant fps because media projection only produce fps if the screen change
       // Use the actual FPS setting instead of hardcoded 15
       getGlInterface().setForceRender(true, fps)
@@ -421,12 +648,11 @@ class ScreenService: Service(), ConnectChecker {
             when (intent?.action) {
                 ACTION_STOP_STREAM -> {
                     Log.d(TAG, "Stop stream action received from notification")
-                    stopStream()
+                    stopAllCapture()
                 }
                 ACTION_TOGGLE_MIC -> {
                     Log.d(TAG, "Toggle mic action received from notification")
                     toggleMicrophone()
-                    updateNotification()
                 }
             ACTION_APPLY_OVERLAY -> {
               Log.d(TAG, "Apply overlay action received")
@@ -443,7 +669,7 @@ class ScreenService: Service(), ConnectChecker {
     }, Context.RECEIVER_NOT_EXPORTED)
   }
 
-  private fun startForegroundService() {
+  private fun promoteCaptureForeground() {
     val channel = NotificationChannel(
         CHANNEL_ID,
         "Stream Prime",
@@ -454,125 +680,219 @@ class ScreenService: Service(), ConnectChecker {
     
     val notificationManager = getSystemService(NotificationManager::class.java)
     notificationManager.createNotificationChannel(channel)
-    
-    // Determine notification text based on current state
-    val contentText = when {
-      genericStream.isRecording -> "Recording video..."
-      genericStream.isStreaming -> "Streaming live..."
-      else -> "Service active"
+
+    startCaptureForeground(buildStatusNotification())
+  }
+
+  /**
+   * Establish the foreground-service types once, then leave them unchanged for the lifetime of
+   * the capture grant. MediaProjectionManagerService revokes an active projection as soon as
+   * Android observes that its owner no longer has a mediaProjection foreground service.
+   */
+  private fun startCaptureForeground(notification: Notification) {
+    // Keep one uninterrupted typed foreground session for each projection grant. Preparation
+    // calls this helper more than once, but those calls must not replace the live FGS notification:
+    // affected vendor builds interpret a plain notify() replacement as STOP_FOREGROUND.
+    if (captureForegroundActive) {
+      Log.d(TAG, "Capture foreground session already active; promotion skipped")
+      return
     }
-    
-    // Create PendingIntents with proper flags for Android 16
-    val micIntent = Intent(this, ScreenService::class.java).apply {
-        action = ACTION_TOGGLE_MIC
-    }
-    val stopIntent = Intent(this, ScreenService::class.java).apply {
-        action = ACTION_STOP_STREAM
-    }
-    
-    val micPendingIntent = PendingIntent.getService(
-        this,
-        0,
-        micIntent,
-        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-    )
-    
-    val stopPendingIntent = PendingIntent.getService(
-        this,
-        1,
-        stopIntent,
-        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-    )
-    
-    val notificationBuilder = NotificationCompat.Builder(this, CHANNEL_ID)
-        .setContentTitle("Stream Prime")
-        .setContentText(contentText)
-        .setSmallIcon(R.drawable.ic_notification_small)
-        .setSilent(true)
-        .setOngoing(true)
-        .setPriority(NotificationCompat.PRIORITY_HIGH)
-        .addAction(
-            R.drawable.ic_launcher_foreground,
-            if (isMicrophoneMuted) "Unmute Mic" else "Mute Mic",
-            micPendingIntent
+
+    publishCaptureForeground(notification)
+    captureForegroundActive = true
+    Log.d(TAG, "Capture foreground session started with explicit mediaProjection|microphone types")
+  }
+
+  private fun publishCaptureForeground(notification: Notification) {
+    when {
+      Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> {
+        startForeground(
+          NOTIFY_ID,
+          notification,
+          ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION or
+              ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
         )
-    
-    // Only add stop action if streaming or recording is active
-    if (genericStream.isStreaming || genericStream.isRecording) {
-        notificationBuilder.addAction(
-            R.drawable.ic_launcher_foreground,
-            if (genericStream.isRecording) "Stop Recording" else "Stop Stream",
-            stopPendingIntent
+      }
+      Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q -> {
+        startForeground(
+          NOTIFY_ID,
+          notification,
+          ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
         )
+      }
+      else -> startForeground(NOTIFY_ID, notification)
     }
-    
-    val notification = notificationBuilder.build()
-    startForeground(NOTIFY_ID, notification)
+  }
+
+  private fun stopCaptureForeground() {
+    if (!captureForegroundActive) return
+    Log.d(TAG, "Stopping capture foreground session")
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+      stopForeground(STOP_FOREGROUND_REMOVE)
+    } else {
+      @Suppress("DEPRECATION")
+      stopForeground(true)
+    }
+    captureForegroundActive = false
+    captureSessionStartedAt = 0L
+  }
+
+  /**
+   * Keep the encoder/network CPU awake and ask the opt-in accessibility process to hold a
+   * priority binding while a user-requested stream or recording is active. The binding never
+   * recreates this service: MediaProjection still requires fresh user consent after process
+   * death.
+   */
+  @SuppressLint("WakelockTimeout")
+  private fun refreshCaptureSessionProtection(forceInactive: Boolean = false) {
+    val shouldProtect = !forceInactive &&
+      ::genericStream.isInitialized &&
+      CaptureSessionProtectionPolicy.shouldProtect(
+        isStreaming = genericStream.isStreaming,
+        isRecording = genericStream.isRecording,
+        streamRequested = streamRequested
+      )
+
+    if (shouldProtect == sessionProtectionActive) {
+      // A previous process can leave the cross-process request persisted as true. An explicit
+      // shutdown must clear it even when this new service instance never acquired protection.
+      if (forceInactive) {
+        StreamAccessibilityService.setSessionProtectionActive(this, false)
+      }
+      return
+    }
+    sessionProtectionActive = shouldProtect
+
+    if (shouldProtect) {
+      runCatching {
+        val lock = captureWakeLock ?: run {
+          val powerManager = getSystemService(POWER_SERVICE) as PowerManager
+          powerManager.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "$packageName:ActiveCapture"
+          ).apply {
+            setReferenceCounted(false)
+            captureWakeLock = this
+          }
+        }
+        if (!lock.isHeld) lock.acquire()
+      }.onFailure {
+        Log.w(TAG, "Unable to acquire active capture wake lock", it)
+      }
+      StreamAccessibilityService.setSessionProtectionActive(this, true)
+      Log.i(TAG, "Active capture background protection enabled")
+      return
+    }
+
+    StreamAccessibilityService.setSessionProtectionActive(this, false)
+    captureWakeLock?.let { lock ->
+      if (lock.isHeld) {
+        runCatching { lock.release() }
+          .onFailure { Log.w(TAG, "Unable to release active capture wake lock", it) }
+      }
+    }
+    Log.i(TAG, "Active capture background protection disabled")
+  }
+
+  /**
+   * End an idle capture session in Android's required order. Removing the mediaProjection
+   * foreground-service type first makes the system revoke the grant and invoke the projection
+   * callback as though capture failed. Explicitly releasing the grant first keeps a user Stop
+   * intentional and prevents a false reconnect/error notification.
+   */
+  private fun finishCaptureSessionIfIdle(): Boolean {
+    if (genericStream.isStreaming || genericStream.isRecording) return false
+    refreshCaptureSessionProtection(forceInactive = true)
+    StreamAccessibilityService.setCaptureActive(this, false)
+    releaseMediaProjection()
+    stopCaptureForeground()
+    stopSelf()
+    return true
   }
 
   fun updateNotification() {
-    try {
-      val notificationManager = getSystemService(NotificationManager::class.java)
-      
-      // Determine notification text based on current state
-      val contentText = when {
-        genericStream.isRecording -> "Recording video..."
-        genericStream.isStreaming -> "Streaming live..."
-        else -> "Service active"
-      }
-      
-      // Create PendingIntents with proper flags for Android 16
-      val micIntent = Intent(this, ScreenService::class.java).apply {
-          action = ACTION_TOGGLE_MIC
-      }
-      val stopIntent = Intent(this, ScreenService::class.java).apply {
-          action = ACTION_STOP_STREAM
-      }
-      
-      val micPendingIntent = PendingIntent.getService(
-          this,
-          0,
-          micIntent,
-          PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    if (!captureForegroundActive) return
+    // Keep the narrow Android 15 vendor workaround without suppressing correct state updates on
+    // unaffected devices. Reposting on the affected builds can revoke the projection itself.
+    if (
+      NotificationSession.shouldAvoidForegroundRefresh(
+        Build.VERSION.SDK_INT,
+        Build.MANUFACTURER,
+        Build.HARDWARE
       )
-      
-      val stopPendingIntent = PendingIntent.getService(
-          this,
-          1,
-          stopIntent,
-          PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-      )
-      
-      val notificationBuilder = NotificationCompat.Builder(this, CHANNEL_ID)
-          .setContentTitle("Stream Prime")
-          .setContentText(contentText)
-          .setSmallIcon(R.drawable.ic_notification_small)
-          .setSilent(true)
-          .setOngoing(true)
-          .setPriority(NotificationCompat.PRIORITY_HIGH)
-          .addAction(
-              R.drawable.ic_launcher_foreground,
-              if (isMicrophoneMuted) "Unmute Mic" else "Mute Mic",
-              micPendingIntent
-          )
-      
-      // Only add stop action if streaming or recording is active
-      if (genericStream.isStreaming || genericStream.isRecording) {
-          notificationBuilder.addAction(
-              R.drawable.ic_launcher_foreground,
-              if (genericStream.isRecording) "Stop Recording" else "Stop Stream",
-              stopPendingIntent
-          )
-      }
-      
-      val notification = notificationBuilder.build()
-      notificationManager.notify(NOTIFY_ID, notification)
-      
-      Log.d(TAG, "Notification updated successfully")
-    } catch (e: Exception) {
-      Log.e(TAG, "Error updating notification: ${e.message}")
-      // Don't let notification errors crash the service
+    ) {
+      Log.d(TAG, "Capture notification refresh skipped for affected Android 15 firmware")
+      return
     }
+    notificationManager?.notify(NOTIFY_ID, buildStatusNotification())
+  }
+
+  private fun buildStatusNotification(): Notification {
+    val isRecording = genericStream.isRecording
+    val isStreaming = genericStream.isStreaming
+    val voiceChatCompatibility =
+      SettingsManager.isGameVoiceChatCompatibilityEnabled(this) &&
+        StreamAccessibilityService.isEnabled(this)
+    val micPendingIntent = PendingIntent.getService(
+      this,
+      0,
+      Intent(this, ScreenService::class.java).apply { action = ACTION_TOGGLE_MIC },
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+    val stopPendingIntent = PendingIntent.getService(
+      this,
+      1,
+      Intent(this, ScreenService::class.java).apply { action = ACTION_STOP_STREAM },
+      PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+    val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+      .setContentTitle("Stream Prime")
+      .setContentText(
+        when {
+          isRecording && isStreaming && voiceChatCompatibility ->
+            "Recording + live • Mic Share compatibility"
+          isRecording && voiceChatCompatibility -> "Recording • Mic Share compatibility"
+          isStreaming && voiceChatCompatibility -> "Live • Mic Share compatibility"
+          isRecording && isStreaming -> "Recording and streaming live"
+          isRecording -> "Recording video"
+          isStreaming -> "Streaming live"
+          voiceChatCompatibility -> "Screen capture • Mic Share compatibility"
+          else -> "Screen capture active"
+        }
+      )
+      .setSmallIcon(R.drawable.ic_notification_small)
+      .setSilent(true)
+      .setOnlyAlertOnce(true)
+      .setOngoing(true)
+      // A capture notification must be visible immediately. Leaving the Android 12+ default
+      // deferred policy lets affected Motorola/Unisoc builds detach the notification when the
+      // encoder becomes active; that demotes this service and MediaProjection is then revoked.
+      .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
+      .setCategory(NotificationCompat.CATEGORY_SERVICE)
+      .setPriority(NotificationCompat.PRIORITY_HIGH)
+      .addAction(
+        R.drawable.ic_launcher_foreground,
+        NotificationSession.microphoneActionLabel(isMicrophoneMuted),
+        micPendingIntent
+      )
+
+    // Let SystemUI render the elapsed duration without reposting the notification every second.
+    // Reposting can replace foreground-service state; a system chronometer does not touch it.
+    builder
+      .setWhen(
+        if (captureSessionStartedAt > 0L) captureSessionStartedAt else System.currentTimeMillis()
+      )
+      .setShowWhen(true)
+      .setUsesChronometer(true)
+
+    if (isStreaming || isRecording || captureForegroundActive || pendingCaptureRequest != null) {
+      builder.addAction(
+        R.drawable.ic_launcher_foreground,
+        "Stop Capture",
+        stopPendingIntent
+      )
+    }
+    return builder.build()
   }
 
   private fun keepAliveTrick() {
@@ -586,14 +906,13 @@ class ScreenService: Service(), ConnectChecker {
         .setPriority(NotificationCompat.PRIORITY_HIGH)
         .build()
       
-      // Ensure foreground service is maintained for background audio access
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        startForeground(NOTIFY_ID, notification)
-        Log.d("ScreenService", "Maintained foreground service with microphone access")
-      } else {
-        startForeground(NOTIFY_ID, notification)
-        Log.d("ScreenService", "Maintained foreground service (legacy)")
-      }
+      // Keep both capture and microphone service types active. Losing the mediaProjection type
+      // makes Android revoke the token and immediately invalidates playback audio capture.
+      startCaptureForeground(notification)
+      Log.d(
+        TAG,
+        "Maintained foreground service with explicit mediaProjection/microphone capture types"
+      )
     } catch (e: Exception) {
       Log.e(TAG, "Error in keepAliveTrick: ${e.message}")
       // Don't let notification errors crash the service
@@ -625,7 +944,9 @@ class ScreenService: Service(), ConnectChecker {
   }
 
   override fun onBind(p0: Intent?): IBinder? {
-    return null
+    // The isolated Accessibility service uses this binder only to raise the importance of an
+    // already-running capture process. All capture control remains inside ScreenService.
+    return localBinder
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -633,23 +954,44 @@ class ScreenService: Service(), ConnectChecker {
     
     // Handle notification action intents
     when (intent?.action) {
+        ACTION_ARM_CAPTURE_FOREGROUND -> {
+            if (pendingCaptureRequest == null) {
+                takeStartupCaptureRequest()?.let { request ->
+                    pendingCaptureRequest = PendingCaptureRequest(
+                        request.resultCode,
+                        request.data,
+                        request.completion
+                    )
+                    captureSessionStartedAt = System.currentTimeMillis()
+                }
+            }
+            // This call must acknowledge startForegroundService() from inside onStartCommand.
+            // Promoting before this callback leaves a pending FGS start unacknowledged; affected
+            // Android 15 builds then remove the service type when the activity leaves the screen,
+            // which immediately revokes MediaProjection.
+            if (pendingCaptureRequest == null) {
+                Log.w(TAG, "Ignoring stale capture foreground start without a consent request")
+                return START_NOT_STICKY
+            }
+            try {
+                promoteCaptureForeground()
+                Log.d(TAG, "Capture foreground-service start acknowledged in onStartCommand")
+                Handler(Looper.getMainLooper()).post(::completePendingCaptureRequest)
+            } catch (error: RuntimeException) {
+                Log.e(TAG, "Unable to promote capture foreground service", error)
+                failPendingCaptureRequest()
+            }
+            // A projection grant cannot be restored after process death; never recreate this
+            // service without a new user consent result.
+            return START_NOT_STICKY
+        }
         ACTION_STOP_STREAM -> {
             Log.d(TAG, "Stop action received from notification")
-            // Stop both streaming and recording
-            if (genericStream.isStreaming) {
-                stopStream()
-            }
-            if (genericStream.isRecording) {
-                stopRecording()
-            }
+            stopAllCapture()
         }
         ACTION_TOGGLE_MIC -> {
             Log.d(TAG, "Toggle mic action received from notification")
             toggleMicrophone()
-            // Add a small delay to ensure state is updated before updating notification
-            Handler(Looper.getMainLooper()).postDelayed({
-                updateNotification()
-            }, 100)
         }
         ACTION_APPLY_OVERLAY -> {
             Log.d(TAG, "Apply overlay action received by service")
@@ -657,11 +999,7 @@ class ScreenService: Service(), ConnectChecker {
         }
     }
     
-    return START_STICKY
-  }
-
-  fun sendIntent(): Intent {
-    return mediaProjectionManager.createScreenCaptureIntent()
+    return START_NOT_STICKY
   }
 
   fun isStreaming(): Boolean {
@@ -670,6 +1008,41 @@ class ScreenService: Service(), ConnectChecker {
 
   fun isRecording(): Boolean {
     return genericStream.isRecording
+  }
+
+  private fun notifyRecordingStateChanged(isRecording: Boolean) {
+    sendBroadcast(
+      Intent(ACTION_RECORDING_STATE_CHANGED)
+        .setPackage(packageName)
+        .putExtra(EXTRA_IS_RECORDING, isRecording)
+    )
+  }
+
+  private fun notifyMicrophoneStateChanged() {
+    sendBroadcast(
+      Intent(ACTION_MICROPHONE_STATE_CHANGED)
+        .setPackage(packageName)
+        .putExtra(EXTRA_MICROPHONE_MUTED, isMicrophoneMuted)
+        .putExtra(EXTRA_MICROPHONE_VOLUME, micVolume)
+        .putExtra(EXTRA_MICROPHONE_RESTORE_VOLUME, micVolumeBeforeMute)
+    )
+  }
+
+  private fun stopAllCapture() {
+    pendingCaptureRequest?.completion?.invoke(false)
+    pendingCaptureRequest = null
+
+    if (genericStream.isStreaming || streamRequested || currentEndpoint != null) {
+      stopStream()
+    }
+    if (genericStream.isRecording) {
+      stopRecording()
+    }
+    // The activity may still be visible when Stop is pressed from the notification. Publish the
+    // final state even if the recorder already transitioned to STOPPED before this command was
+    // handled, so every active screen can immediately restore its Record action.
+    notifyRecordingStateChanged(false)
+    finishCaptureSessionIfIdle()
   }
 
   fun stopStream() {
@@ -688,21 +1061,17 @@ class ScreenService: Service(), ConnectChecker {
       // Clear stream state even when the RTMP client is between retry attempts.
       streamStartTime = 0
       saveStreamStartTime()
+      refreshCaptureSessionProtection()
 
       if (!genericStream.isRecording) {
         Log.d("ScreenService", "No recording active, stopping service")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-          stopForeground(STOP_FOREGROUND_REMOVE)
-        } else {
-          @Suppress("DEPRECATION")
-          stopForeground(true)
-        }
-        stopSelf()
+        finishCaptureSessionIfIdle()
       } else {
         updateNotification()
       }
     } catch (e: Exception) {
       Log.e("ScreenService", "Error stopping stream: ${e.message}")
+      refreshCaptureSessionProtection()
     }
   }
 
@@ -710,19 +1079,16 @@ class ScreenService: Service(), ConnectChecker {
     try {
       if (genericStream.isRecording) {
         genericStream.stopRecord()
+        recordingStartTime = 0L
+        notifyRecordingStateChanged(false)
+        refreshCaptureSessionProtection()
         PathUtils.updateGallery(this, recordPath)
         Log.d("ScreenService", "Recording stopped")
         
         // If no streaming is happening, stop the service entirely
         if (!genericStream.isStreaming) {
           Log.d("ScreenService", "No streaming active, stopping service")
-          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-          } else {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
-          }
-          stopSelf()
+          finishCaptureSessionIfIdle()
         } else {
           // Update notification if streaming is still active
           updateNotification()
@@ -730,6 +1096,7 @@ class ScreenService: Service(), ConnectChecker {
       }
     } catch (e: Exception) {
       Log.e("ScreenService", "Error stopping recording: ${e.message}")
+      refreshCaptureSessionProtection()
     }
   }
 
@@ -742,31 +1109,35 @@ class ScreenService: Service(), ConnectChecker {
     serviceDestroyed = true
     streamRequested = false
     resetReconnectState(clearEndpoint = true)
+    pendingCaptureRequest?.completion?.invoke(false)
+    pendingCaptureRequest = null
     try {
+      refreshCaptureSessionProtection(forceInactive = true)
+      StreamAccessibilityService.setCaptureActive(this, false)
       // Unregister broadcast receiver
       notificationReceiver?.let {
         unregisterReceiver(it)
         notificationReceiver = null
       }
       
-      // Stop foreground service
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-        stopForeground(STOP_FOREGROUND_REMOVE)
-      } else {
-        @Suppress("DEPRECATION")
-        stopForeground(true)
-      }
-      
+      // Unregister our callback and release the grant before tearing down the stream source.
+      // This prevents GenericStream/ScreenSource cleanup from being reported as an unexpected
+      // projection revocation while this service is intentionally shutting down.
+      releaseMediaProjection()
+
       // Release the entire stream object, including preview EGL and MediaProjection
       // resources. Leaving preview attached lets a replacement service create a second
       // publisher but fail to attach the same SurfaceView with EGL_BAD_ALLOC.
       if (::genericStream.isInitialized) {
         val wasRecording = genericStream.isRecording
         genericStream.release()
-        if (wasRecording && recordPath.isNotBlank()) PathUtils.updateGallery(this, recordPath)
+        if (wasRecording) {
+          notifyRecordingStateChanged(false)
+          if (recordPath.isNotBlank()) PathUtils.updateGallery(this, recordPath)
+        }
       }
-      mediaProjection?.stop()
-      mediaProjection = null
+      stopCaptureForeground()
+      recordingStartTime = 0L
       
       // Clean up overlay renderer
       layeredOverlayRenderer?.release()
@@ -786,14 +1157,70 @@ class ScreenService: Service(), ConnectChecker {
     }
   }
 
-  fun prepareStream(resultCode: Int, data: Intent): Boolean {
-    keepAliveTrick()
+  /**
+   * Queue projection preparation until Android has delivered the foreground-service start.
+   * MediaProjection consent data is single-use, so only the latest pending request is retained.
+   */
+  fun prepareStream(resultCode: Int, data: Intent, completion: (Boolean) -> Unit) {
+    pendingCaptureRequest?.completion?.invoke(false)
+    pendingCaptureRequest = PendingCaptureRequest(resultCode, data, completion)
+    captureSessionStartedAt = System.currentTimeMillis()
+
+    if (captureForegroundActive) {
+      Handler(Looper.getMainLooper()).post(::completePendingCaptureRequest)
+      return
+    }
+
+    try {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        ContextCompat.startForegroundService(
+          applicationContext,
+          Intent(applicationContext, ScreenService::class.java).apply {
+            action = ACTION_ARM_CAPTURE_FOREGROUND
+          }
+        )
+        Log.d(TAG, "Capture foreground-service start requested after projection consent")
+      } else {
+        promoteCaptureForeground()
+        Handler(Looper.getMainLooper()).post(::completePendingCaptureRequest)
+      }
+    } catch (error: RuntimeException) {
+      Log.e(TAG, "Unable to request capture foreground service", error)
+      failPendingCaptureRequest()
+    }
+  }
+
+  private fun completePendingCaptureRequest() {
+    val request = pendingCaptureRequest ?: return
+    pendingCaptureRequest = null
+    val success = try {
+      prepareStreamInternal(request.resultCode, request.data)
+    } catch (error: RuntimeException) {
+      Log.e(TAG, "Screen capture preparation failed", error)
+      false
+    }
+    if (!success) {
+      releaseMediaProjection()
+      if (!genericStream.isStreaming && !genericStream.isRecording) {
+        finishCaptureSessionIfIdle()
+      }
+    }
+    request.completion(success)
+  }
+
+  private fun failPendingCaptureRequest() {
+    val request = pendingCaptureRequest ?: return
+    pendingCaptureRequest = null
+    request.completion(false)
+  }
+
+  private fun prepareStreamInternal(resultCode: Int, data: Intent): Boolean {
     // Re-prepare encoders without stopping this service. The public stopStream() represents
     // a user Stop and intentionally calls stopSelf().
     streamRequested = false
     resetReconnectState(clearEndpoint = true)
     if (genericStream.isStreaming) genericStream.stopStream()
-    mediaProjection?.stop()
+    releaseMediaProjection()
     
     // Force reload quality settings from centralized Stream Settings
     loadQualitySettings()
@@ -820,9 +1247,19 @@ class ScreenService: Service(), ConnectChecker {
       return false
     }
     
-    val mediaProjection = mediaProjectionManager.getMediaProjection(resultCode, data) ?: throw IllegalStateException("get MediaProjection failed")
-    this.mediaProjection = mediaProjection
-    val screenSource = ScreenSource(applicationContext, mediaProjection)
+    val projection = mediaProjectionManager.getMediaProjection(resultCode, data)
+      ?: throw IllegalStateException("get MediaProjection failed")
+    val projectionCallback = object : MediaProjection.Callback() {
+      override fun onStop() {
+        Handler(Looper.getMainLooper()).post {
+          handleProjectionStopped(projection)
+        }
+      }
+    }
+    projection.registerCallback(projectionCallback, Handler(Looper.getMainLooper()))
+    mediaProjection = projection
+    mediaProjectionCallback = projectionCallback
+    val screenSource = ScreenSource(applicationContext, projection)
     return try {
       genericStream.changeVideoSource(screenSource)
       toggleAudioSource(selectedAudioSource)
@@ -835,6 +1272,43 @@ class ScreenService: Service(), ConnectChecker {
     } catch (_: IllegalArgumentException) {
       false
     }
+  }
+
+  private fun releaseMediaProjection() {
+    val projection = mediaProjection ?: return
+    val projectionCallback = mediaProjectionCallback
+    mediaProjection = null
+    mediaProjectionCallback = null
+
+    if (projectionCallback != null) {
+      runCatching { projection.unregisterCallback(projectionCallback) }
+    }
+    runCatching { projection.stop() }
+      .onFailure { Log.w(TAG, "Unable to stop MediaProjection cleanly: ${it.message}") }
+  }
+
+  private fun handleProjectionStopped(projection: MediaProjection) {
+    // Ignore a delayed callback belonging to an older capture grant.
+    if (mediaProjection !== projection) return
+
+    mediaProjection = null
+    mediaProjectionCallback = null
+    Log.e(
+      TAG,
+      "MediaProjection ended; stopping capture so audio/video sources cannot retry an invalid token"
+    )
+
+    val wasStreaming = genericStream.isStreaming
+    val wasRecording = genericStream.isRecording
+    if (wasStreaming) stopStream()
+    if (wasRecording && genericStream.isRecording) stopRecording()
+
+    if (!wasStreaming && !wasRecording) {
+      stopCaptureForeground()
+      stopSelf()
+    }
+
+    callback?.onConnectionFailed("Screen capture ended. Start again to grant permission.")
   }
 
   fun getCurrentAudioSource(): AudioSource = genericStream.audioSource
@@ -851,7 +1325,7 @@ class ScreenService: Service(), ConnectChecker {
           Log.d(TAG, "Already using PristineAudioSource, no change needed")
           return
         }
-        genericStream.changeAudioSource(PristineAudioSource(this))
+        genericStream.changeAudioSource(createPristineAudioSource())
         Log.d(TAG, "Successfully switched to PristineAudioSource")
       }
       R.id.audio_source_internal -> {
@@ -883,7 +1357,7 @@ class ScreenService: Service(), ConnectChecker {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
           mediaProjection?.let {
             selectedAudioSource = R.id.audio_source_mix
-            genericStream.changeAudioSource(MixAudioSource(it, context = this))
+            genericStream.changeAudioSource(createMixedAudioSource(it))
             Log.d(TAG, "Successfully switched to MixAudioSource")
           } ?: run {
             fallbackToMicrophone("MediaProjection unavailable for MixAudioSource")
@@ -898,7 +1372,7 @@ class ScreenService: Service(), ConnectChecker {
           mediaProjection?.let { projection ->
             selectedAudioSource = R.id.audio_source_dual_channel
             // Use MixAudioSource with anti-feedback measures
-            genericStream.changeAudioSource(MixAudioSource(projection, context = this))
+            genericStream.changeAudioSource(createMixedAudioSource(projection))
             Log.d(TAG, "Successfully switched to Dual Channel Audio (using enhanced MixAudioSource)")
           } ?: run {
             fallbackToMicrophone("MediaProjection unavailable for Dual Channel Audio")
@@ -920,7 +1394,7 @@ class ScreenService: Service(), ConnectChecker {
     Log.w(TAG, "$reason; falling back to microphone audio")
     selectedAudioSource = R.id.audio_source_microphone
     if (genericStream.audioSource !is PristineAudioSource) {
-      genericStream.changeAudioSource(PristineAudioSource(this))
+      genericStream.changeAudioSource(createPristineAudioSource())
     }
   }
 
@@ -934,9 +1408,17 @@ class ScreenService: Service(), ConnectChecker {
           return
         }
       }
+
+      // The isolated Mic Share service must be enabled before AudioRecord starts. When this
+      // optional mode is selected, fail clearly instead of silently recording an all-zero mic.
+      if (!activateVoiceChatCompatibilityForCapture()) {
+        state(RecordController.Status.STOPPED)
+        finishCaptureSessionIfIdle()
+        return
+      }
       
       // Start foreground service when recording begins
-      startForegroundService()
+      promoteCaptureForeground()
       
       // Ensure quality settings are up to date before recording
       reloadQualitySettings()
@@ -979,32 +1461,57 @@ class ScreenService: Service(), ConnectChecker {
       
       Log.d("ScreenService", "Starting recording with settings: ${width}x${height}, ${fps}fps, ${vBitrate}bps, rotation=$rotation")
       
-      genericStream.startRecord(recordPath) { status ->
-        if (status == RecordController.Status.RECORDING) {
-          state(RecordController.Status.RECORDING)
-          Log.d("ScreenService", "Recording started successfully")
-          
-          // Debug audio source after recording starts
-          Log.d(TAG, "=== AUDIO SOURCE AFTER RECORDING START ===")
-          debugAudioSourceOnStart()
-          
-          // Re-apply volume settings after recording starts
-          Log.d(TAG, "=== RE-APPLYING VOLUME SETTINGS AFTER RECORDING START ===")
-          applyStreamAudioLevels()
-          
-          // Update notification to show recording status
-          updateNotification()
+      try {
+        genericStream.startRecord(recordPath) { status ->
+          if (status == RecordController.Status.RECORDING) {
+            if (recordingStartTime <= 0L) recordingStartTime = System.currentTimeMillis()
+            notifyRecordingStateChanged(true)
+            state(RecordController.Status.RECORDING)
+            Log.d("ScreenService", "Recording started successfully")
+
+            // Debug audio source after recording starts
+            Log.d(TAG, "=== AUDIO SOURCE AFTER RECORDING START ===")
+            debugAudioSourceOnStart()
+
+            // Re-apply volume settings after recording starts
+            Log.d(TAG, "=== RE-APPLYING VOLUME SETTINGS AFTER RECORDING START ===")
+            applyStreamAudioLevels()
+
+            // Update notification to show recording status
+            refreshCaptureSessionProtection()
+            updateNotification()
+          }
         }
+        state(RecordController.Status.STARTED)
+        refreshCaptureSessionProtection()
+      } catch (error: Exception) {
+        Log.e(TAG, "Unable to start recording sources", error)
+        if (genericStream.isRecording) {
+          runCatching { genericStream.stopRecord() }
+            .onFailure { Log.w(TAG, "Unable to clean up failed recording start", it) }
+        }
+        recordingStartTime = 0L
+        notifyRecordingStateChanged(false)
+        refreshCaptureSessionProtection()
+        state(RecordController.Status.STOPPED)
+        callback?.onConnectionFailed(
+          "Unable to start selected audio capture. Try Microphone audio."
+        )
+        finishCaptureSessionIfIdle()
+        return
       }
-      state(RecordController.Status.STARTED)
     } else {
       genericStream.stopRecord()
+      recordingStartTime = 0L
+      notifyRecordingStateChanged(false)
+      refreshCaptureSessionProtection()
       state(RecordController.Status.STOPPED)
       PathUtils.updateGallery(this, recordPath)
       Log.d("ScreenService", "Recording stopped")
-      
-      // Update notification to show current status
-      updateNotification()
+
+      if (!finishCaptureSessionIfIdle()) {
+        updateNotification()
+      }
     }
   }
 
@@ -1021,18 +1528,25 @@ class ScreenService: Service(), ConnectChecker {
     }
     
     // Start foreground service when streaming begins
-    startForegroundService()
+    promoteCaptureForeground()
     
     // Validate endpoint format
     if (!endpoint.startsWith("rtmp://")) {
       Log.e("ScreenService", "Invalid RTMP endpoint format")
       callback?.onConnectionFailed("Invalid RTMP URL format")
+      finishCaptureSessionIfIdle()
       return
     }
 
     if (serviceDestroyed || INSTANCE !== this) {
       Log.w(TAG, "Ignoring stream start from an inactive service instance")
       callback?.onConnectionFailed("Streaming service is no longer active")
+      finishCaptureSessionIfIdle()
+      return
+    }
+
+    if (!activateVoiceChatCompatibilityForCapture()) {
+      finishCaptureSessionIfIdle()
       return
     }
     
@@ -1040,6 +1554,7 @@ class ScreenService: Service(), ConnectChecker {
     streamRequested = true
     resetReconnectState(clearEndpoint = false)
     currentEndpoint = endpoint
+    refreshCaptureSessionProtection()
 
     // Ensure quality settings are up to date before streaming
     reloadQualitySettings()
@@ -1085,6 +1600,11 @@ class ScreenService: Service(), ConnectChecker {
         saveStreamStartTime()
         
         genericStream.startStream(endpoint)
+        refreshCaptureSessionProtection()
+        // Keep the projection type attached after audio/video sources become active. This is
+        // especially important on Android 15 vendor builds that emit an FGS-state transition when
+        // REMOTE_SUBMIX and the physical microphone start together.
+        startCaptureForeground(buildStatusNotification())
         Log.d("ScreenService", "Stream start initiated")
         
         // Debug audio source after streaming starts
@@ -1099,10 +1619,21 @@ class ScreenService: Service(), ConnectChecker {
         updateNotification()
       } catch (e: Exception) {
         Log.e("ScreenService", "Failed to start stream: ${e.message}")
+        streamRequested = false
+        resetReconnectState(clearEndpoint = true)
+        streamStartTime = 0L
+        saveStreamStartTime()
+        if (genericStream.isStreaming) {
+          runCatching { genericStream.stopStream() }
+            .onFailure { Log.w(TAG, "Unable to clean up failed stream start", it) }
+        }
+        refreshCaptureSessionProtection()
+        finishCaptureSessionIfIdle()
         callback?.onConnectionFailed("Failed to start stream: ${e.message}")
       }
     } else {
       Log.d("ScreenService", "Stream already running, ignoring start request")
+      refreshCaptureSessionProtection()
     }
   }
 
@@ -1116,6 +1647,8 @@ class ScreenService: Service(), ConnectChecker {
     }
     if (wasRecording) {
       genericStream.stopRecord()
+      recordingStartTime = 0L
+      notifyRecordingStateChanged(false)
     }
     
     // Update settings
@@ -1126,7 +1659,8 @@ class ScreenService: Service(), ConnectChecker {
     
     // Reinitialize with new settings
     genericStream.release()
-    genericStream = GenericStream(baseContext, this, NoVideoSource(), PristineAudioSource(this)).apply {
+    genericStream = GenericStream(baseContext, this, NoVideoSource(), createPristineAudioSource()).apply {
+      setTimestampMode(TimestampMode.CLOCK, TimestampMode.BUFFER)
       //This is important to keep a constant fps because media projection only produce fps if the screen change
       getGlInterface().setForceRender(true, fps)
       // Disable automatic orientation handling to prevent forced screen rotation
@@ -1167,7 +1701,7 @@ class ScreenService: Service(), ConnectChecker {
     }
   }
 
-  private fun applyConfiguredOverlay() {
+  fun applyConfiguredOverlay() {
     try {
       val cfg = OverlayManager.load(this)
       val gl = genericStream.getGlInterface()
@@ -1203,7 +1737,7 @@ class ScreenService: Service(), ConnectChecker {
           renderer.setCanvasSize(width, height)
           renderer.updateCaptureRotation(if (isVerticalCanvas) capturedDisplayRotationDegrees else 0)
           renderer.updateCaptureLandscapeAspect(capturedDisplayLandscapeAspect)
-          if (belowScreen.isNotEmpty()) renderer.setBackgroundImage(renderOverlayBitmap(belowScreen))
+          if (belowScreen.isNotEmpty()) renderer.setBackgroundLayers(this, belowScreen)
           gl.addFilter(renderer)
         }
       }
@@ -1229,21 +1763,6 @@ class ScreenService: Service(), ConnectChecker {
       // Avoid crashing service due to overlay errors
       Log.e(TAG, "Error applying layered overlay: ${e.message}")
     }
-  }
-
-  private fun renderOverlayBitmap(layers: List<OverlayLayer>): Bitmap? {
-    val bitmap = LayerCanvasRenderer.createCanvasBitmap(width, height) ?: return null
-    val cache = mutableMapOf<String, Bitmap?>()
-    LayerCanvasRenderer.renderLayersOnCanvas(
-      canvas = android.graphics.Canvas(bitmap),
-      layers = layers,
-      canvasWidth = width.toFloat(),
-      canvasHeight = height.toFloat(),
-      context = this,
-      layerBitmapCache = cache
-    )
-    LayerCanvasRenderer.clearBitmapCache(cache)
-    return bitmap
   }
 
   private fun readCapturedDisplayRotation(): Int {
@@ -1310,11 +1829,14 @@ class ScreenService: Service(), ConnectChecker {
     }
     if (wasRecording) {
       genericStream.stopRecord()
+      recordingStartTime = 0L
+      notifyRecordingStateChanged(false)
     }
     
     // Reinitialize with new settings
     genericStream.release()
-    genericStream = GenericStream(baseContext, this, NoVideoSource(), PristineAudioSource(this)).apply {
+    genericStream = GenericStream(baseContext, this, NoVideoSource(), createPristineAudioSource()).apply {
+      setTimestampMode(TimestampMode.CLOCK, TimestampMode.BUFFER)
       //This is important to keep a constant fps because media projection only produce fps if the screen change
       // Use the actual FPS setting instead of hardcoded 15
       getGlInterface().setForceRender(true, fps)
@@ -1368,44 +1890,35 @@ class ScreenService: Service(), ConnectChecker {
   }
 
   fun toggleMicrophone() {
+    setMicrophoneMuted(!isMicrophoneMuted)
+  }
+
+  fun setMicrophoneMuted(muted: Boolean) {
     try {
-      isMicrophoneMuted = !isMicrophoneMuted
-      Log.d("ScreenService", "Toggling microphone - isMicrophoneMuted: $isMicrophoneMuted")
-      
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        mediaProjection?.let { projection ->
-          try {
-            if (isMicrophoneMuted) {
-              // Switch to InternalAudioSource (device audio only)
-              genericStream.changeAudioSource(InternalAudioSource(projection))
-              Log.d(TAG, "Switched to device audio only")
-            } else {
-              // Switch to MixAudioSource (device audio + microphone)
-              genericStream.changeAudioSource(MixAudioSource(projection, context = this))
-              Log.d(TAG, "Switched to device audio + microphone")
-            }
-            
-                  // Apply current volume levels to the new audio source
+      val nextState = MicrophoneMuteVolumePolicy.setMuted(currentMicrophoneState(), muted)
+      applyMicrophoneState(nextState)
+      Log.d(
+        TAG,
+        "Setting microphone mute - muted=$isMicrophoneMuted, mic=$micVolume%, " +
+          "restore=$micVolumeBeforeMute%"
+      )
+
+      // A microphone mute must never replace the live audio source. Recreating AudioRecord while
+      // recording/streaming races the old REMOTE_SUBMIX teardown on vendor audio stacks and can
+      // leave the replacement internal source silent. Keep MixAudioSource running and set only
+      // its microphone contribution to zero; device playback remains uninterrupted.
       applyStreamAudioLevels()
-      
-      // Apply enhanced audio quality settings to reduce hissing
       applyEnhancedAudioQuality()
-      
-      // Comprehensive verification after toggling microphone
       verifyAudioControlsAndStates()
-            
-          } catch (e: Exception) {
-            Log.e(TAG, "Failed to toggle microphone: ${e.message}")
-          }
-        }
-      }
       
       saveVolumeSettings() // Save volume settings after toggling microphone
+      notifyMicrophoneStateChanged()
+      updateNotification()
       
       // Log the microphone state change for debugging
       Log.d(TAG, "Microphone state changed - isMicrophoneMuted: $isMicrophoneMuted")
     } catch (e: Exception) {
-      Log.e(TAG, "Error toggling microphone: ${e.message}")
+      Log.e(TAG, "Error setting microphone mute: ${e.message}", e)
     }
   }
 
@@ -1414,8 +1927,13 @@ class ScreenService: Service(), ConnectChecker {
       Log.d(TAG, "=== SETTING MIC VOLUME ===")
       Log.d(TAG, "Previous mic volume: $micVolume%")
       Log.d(TAG, "New mic volume: $volume%")
-      
-      micVolume = volume.coerceIn(0, 100)
+
+      val nextState = MicrophoneMuteVolumePolicy.setVolume(currentMicrophoneState(), volume)
+      if (nextState == currentMicrophoneState() && isMicrophoneMuted) {
+        Log.d(TAG, "Ignoring microphone slider change while mute lock is active")
+        return
+      }
+      applyMicrophoneState(nextState)
       Log.d(TAG, "Stream microphone level set to: $micVolume%")
       
       // Apply volume to stream audio source and verify controls
@@ -1453,6 +1971,10 @@ class ScreenService: Service(), ConnectChecker {
     return micVolume
   }
 
+  fun getMicVolumeBeforeMute(): Int {
+    return micVolumeBeforeMute
+  }
+
   fun getDeviceVolume(): Int {
     return deviceVolume
   }
@@ -1472,56 +1994,6 @@ class ScreenService: Service(), ConnectChecker {
 
   fun getStreamStartTime(): Long {
     return streamStartTime
-  }
-
-  /**
-   * Handle window state changes from accessibility service
-   */
-  fun onWindowStateChanged(packageName: String?, className: String?) {
-    Log.d(TAG, "Window state changed - Package: $packageName, Class: $className")
-    
-    // Update notification with current app info if streaming
-    if (genericStream.isStreaming || genericStream.isRecording) {
-      updateNotification()
-    }
-  }
-
-  /**
-   * Handle window content changes from accessibility service
-   */
-  fun onWindowContentChanged(packageName: String?) {
-    Log.d(TAG, "Window content changed - Package: $packageName")
-    
-    // Log the current app being captured
-    if (genericStream.isStreaming || genericStream.isRecording) {
-      Log.d(TAG, "Currently capturing: $packageName")
-    }
-  }
-
-  /**
-   * Handle user interactions from accessibility service
-   */
-  fun onUserInteraction(packageName: String?, className: String?) {
-    Log.d(TAG, "User interaction - Package: $packageName, Class: $className")
-    
-    // Track user interactions for analytics or enhanced capture
-    if (genericStream.isStreaming || genericStream.isRecording) {
-      Log.d(TAG, "User interaction detected while streaming/recording")
-    }
-  }
-
-  /**
-   * Check if accessibility service is enabled
-   */
-  fun isAccessibilityServiceEnabled(): Boolean {
-    return StreamAccessibilityService.INSTANCE?.isAccessibilityServiceEnabled() == true
-  }
-
-  /**
-   * Get enhanced window information for better capture
-   */
-  fun getEnhancedWindowInfo(): String? {
-    return StreamAccessibilityService.INSTANCE?.getCurrentWindowInfo()
   }
 
   fun saveStreamStartTime() {
@@ -1554,9 +2026,16 @@ class ScreenService: Service(), ConnectChecker {
       Log.d(TAG, "Audio source type: ${audioSourceForCheck.javaClass.simpleName}")
       Log.d(TAG, "Audio source ready: ${audioSourceForCheck != null}")
       
-      // Convert percentage to float (0.0 to 1.0) for stream audio processing
-      val micLevelFloat = micVolume / 100f
-      val deviceAudioLevelFloat = deviceVolume / 100f
+      // Capture levels are controlled only by the two app sliders. The physical speaker volume is
+      // deliberately not part of this policy: users often mute the phone to avoid feedback while
+      // still expecting device playback and microphone audio in the encoded output.
+      val levels = CaptureAudioLevelPolicy.resolve(
+        microphonePercent = micVolume,
+        devicePercent = deviceVolume,
+        microphoneMuted = isMicrophoneMuted
+      )
+      val micLevelFloat = levels.microphone
+      val deviceAudioLevelFloat = levels.device
       
       Log.d(TAG, "=== APPLYING STREAM AUDIO LEVELS ===")
       Log.d(TAG, "Raw volume values - Mic: $micVolume%, Device: $deviceVolume%")
@@ -1568,71 +2047,27 @@ class ScreenService: Service(), ConnectChecker {
       
       when (currentAudioSource) {
         is PristineAudioSource -> {
-          // Apply volume to PristineAudioSource
           currentAudioSource.setMicrophoneVolume(micLevelFloat)
           currentAudioSource.setDeviceAudioVolume(deviceAudioLevelFloat)
-          
-          // Check system volume and mute if necessary
-          val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-          val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-          val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-          val systemVolumeLevel = if (maxVolume > 0) currentVolume.toFloat() / maxVolume.toFloat() else 0f
-          
-          if (systemVolumeLevel <= 0.01f) {
-            currentAudioSource.mute()
-            Log.d(TAG, "🔇 System volume is 0, muting PristineAudioSource")
-          } else {
-            currentAudioSource.unMute()
-            Log.d(TAG, "🔊 System volume is ${systemVolumeLevel * 100}%, unmuting PristineAudioSource")
-          }
-          
-          Log.d(TAG, "✅ Applied volume to PristineAudioSource - Mic: $micLevelFloat, Device: $deviceAudioLevelFloat, System: ${systemVolumeLevel * 100}%")
+          currentAudioSource.setRespectSystemVolume(false)
+          if (levels.hasMicrophoneAudio) currentAudioSource.unMute() else currentAudioSource.mute()
+          Log.d(TAG, "Applied user levels to PristineAudioSource - Mic: $micLevelFloat")
         }
         is MixAudioSource -> {
-          // Apply volume control to MixAudioSource
           currentAudioSource.microphoneVolume = micLevelFloat
           currentAudioSource.internalVolume = deviceAudioLevelFloat
-          
-          // Check system volume and mute if necessary
-          val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-          val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-          val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-          val systemVolumeLevel = if (maxVolume > 0) currentVolume.toFloat() / maxVolume.toFloat() else 0f
-          
-          if (systemVolumeLevel <= 0.01f) {
-            currentAudioSource.mute()
-            Log.d(TAG, "🔇 System volume is 0, muting MixAudioSource")
-          } else {
-            currentAudioSource.unMute()
-            Log.d(TAG, "🔊 System volume is ${systemVolumeLevel * 100}%, unmuting MixAudioSource")
-          }
-          
-          Log.d(TAG, "✅ Applied volume to MixAudioSource - Mic: $micLevelFloat, Device: $deviceAudioLevelFloat, System: ${systemVolumeLevel * 100}%")
+          currentAudioSource.setRespectSystemVolume(false)
+          if (levels.hasMixedAudio) currentAudioSource.unMute() else currentAudioSource.mute()
+          Log.d(TAG, "Applied independent MixAudioSource levels - Mic: $micLevelFloat, Device: $deviceAudioLevelFloat")
         }
         is MicrophoneSource -> {
-          // For MicrophoneSource, we can only control microphone volume
-          // We need to access the MicrophoneManager through reflection or extension
-          try {
-            val microphoneField = currentAudioSource.javaClass.getDeclaredField("microphone")
-            microphoneField.isAccessible = true
-            val microphone = microphoneField.get(currentAudioSource) as? MicrophoneManager
-            microphone?.setMicrophoneVolume(micLevelFloat)
-            Log.d(TAG, "⚠️ Applied microphone volume to MicrophoneSource: $micLevelFloat (device audio not controlled)")
-          } catch (e: Exception) {
-            Log.e(TAG, "Error applying volume to MicrophoneSource: ${e.message}")
-          }
+          currentAudioSource.microphoneVolume = micLevelFloat
+          Log.d(TAG, "Applied microphone level: $micLevelFloat")
         }
         is InternalAudioSource -> {
-          // For InternalAudioSource, we can only control internal audio volume
-          try {
-            val microphoneField = currentAudioSource.javaClass.getDeclaredField("microphone")
-            microphoneField.isAccessible = true
-            val microphone = microphoneField.get(currentAudioSource) as? MicrophoneManager
-            microphone?.setInternalVolume(deviceAudioLevelFloat)
-            Log.d(TAG, "⚠️ Applied internal volume to InternalAudioSource: $deviceAudioLevelFloat (microphone not controlled)")
-          } catch (e: Exception) {
-            Log.e(TAG, "Error applying volume to InternalAudioSource: ${e.message}")
-          }
+          currentAudioSource.internalVolume = deviceAudioLevelFloat
+          if (levels.hasDeviceAudio) currentAudioSource.unMute() else currentAudioSource.mute()
+          Log.d(TAG, "Applied device-audio level: $deviceAudioLevelFloat")
         }
         else -> {
           Log.d(TAG, "❌ Unknown audio source type: ${currentAudioSource.javaClass.simpleName}")
@@ -1643,16 +2078,14 @@ class ScreenService: Service(), ConnectChecker {
       Log.e(TAG, "Error applying stream audio levels: ${e.message}")
     }
     
-    // Check and apply system volume
+    // Speaker volume is diagnostic only; it must never override capture sliders.
     checkAndApplySystemVolume()
     
     // Debug the audio state
     checkAudioState()
   }
 
-  /**
-   * Check and apply system volume to current audio source
-   */
+  /** Log speaker volume without mutating the capture path. */
   private fun checkAndApplySystemVolume() {
     try {
       val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -1660,30 +2093,10 @@ class ScreenService: Service(), ConnectChecker {
       val currentVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
       val systemVolumeLevel = if (maxVolume > 0) currentVolume.toFloat() / maxVolume.toFloat() else 0f
       
-      val currentAudioSource = genericStream.audioSource
-      when (currentAudioSource) {
-        is PristineAudioSource -> {
-          if (systemVolumeLevel <= 0.01f) {
-            currentAudioSource.mute()
-            Log.d(TAG, "🔇 System volume is 0, muting PristineAudioSource")
-          } else {
-            currentAudioSource.unMute()
-            Log.d(TAG, "🔊 System volume is ${systemVolumeLevel * 100}%, unmuting PristineAudioSource")
-          }
-        }
-        is MixAudioSource -> {
-          if (systemVolumeLevel <= 0.01f) {
-            currentAudioSource.mute()
-            Log.d(TAG, "🔇 System volume is 0, muting MixAudioSource")
-          } else {
-            currentAudioSource.unMute()
-            Log.d(TAG, "🔊 System volume is ${systemVolumeLevel * 100}%, unmuting MixAudioSource")
-          }
-        }
-        else -> {
-          Log.d(TAG, "System volume check skipped for audio source: ${currentAudioSource.javaClass.simpleName}")
-        }
-      }
+      Log.d(
+        TAG,
+        "Speaker volume is ${systemVolumeLevel * 100}% (capture remains controlled by Mic/Device sliders)"
+      )
     } catch (e: Exception) {
       Log.e(TAG, "Error checking system volume: ${e.message}")
     }
@@ -1768,7 +2181,7 @@ class ScreenService: Service(), ConnectChecker {
       // 7. Log recommendations
       Log.d(TAG, "Audio Control Recommendations:")
       if (systemVolumeLevel <= 0.01f) {
-        Log.d(TAG, "  - ⚠️ System volume is 0, audio will be muted")
+        Log.d(TAG, "  - Speaker volume is 0; encoded capture still follows the app sliders")
       }
       if (micVolume == 0) {
         Log.d(TAG, "  - ⚠️ Microphone volume is 0, no mic audio will be captured")
@@ -1836,54 +2249,10 @@ class ScreenService: Service(), ConnectChecker {
    * Apply enhanced audio quality settings to reduce hissing and improve audio clarity
    */
   private fun applyEnhancedAudioQuality() {
-    try {
-      Log.d(TAG, "Applying enhanced audio quality settings")
-      
-      // Apply audio quality improvements to reduce hissing
-      val currentAudioSource = genericStream.audioSource
-      when (currentAudioSource) {
-        is MixAudioSource -> {
-          // Apply anti-feedback measures to prevent hissing when mixing sources
-          applyAntiFeedbackMeasures(currentAudioSource)
-        }
-        is MicrophoneSource -> {
-          // Optimize microphone source
-          try {
-            val microphoneField = currentAudioSource.javaClass.getDeclaredField("microphone")
-            microphoneField.isAccessible = true
-            val microphone = microphoneField.get(currentAudioSource) as? MicrophoneManager
-            microphone?.let { mic ->
-              // Set optimal microphone settings to reduce hissing
-              mic.setMicrophoneVolume((micVolume / 100f).coerceIn(0.1f, 1.0f))
-              Log.d(TAG, "Applied enhanced audio quality to MicrophoneSource")
-            }
-          } catch (e: Exception) {
-            Log.e(TAG, "Error applying enhanced audio quality to MicrophoneSource: ${e.message}")
-          }
-        }
-        is InternalAudioSource -> {
-          // Optimize internal audio source
-          try {
-            val microphoneField = currentAudioSource.javaClass.getDeclaredField("microphone")
-            microphoneField.isAccessible = true
-            val microphone = microphoneField.get(currentAudioSource) as? MicrophoneManager
-            microphone?.let { mic ->
-              // Set optimal internal audio settings
-              mic.setInternalVolume((deviceVolume / 100f).coerceIn(0.1f, 1.0f))
-              Log.d(TAG, "Applied enhanced audio quality to InternalAudioSource")
-            }
-          } catch (e: Exception) {
-            Log.e(TAG, "Error applying enhanced audio quality to InternalAudioSource: ${e.message}")
-          }
-        }
-        else -> {
-          Log.d(TAG, "Unknown audio source type for enhanced quality: ${currentAudioSource.javaClass.simpleName}")
-        }
-      }
-      
-    } catch (e: Exception) {
-      Log.e(TAG, "Error applying enhanced audio quality: ${e.message}")
-    }
+    // PCM ownership, AAC frame sizing, and timestamp pacing are handled in the encoder. Do not
+    // disguise gain changes as a quality filter: doing so previously reduced device audio and
+    // could even turn a user-selected 0% level back on.
+    Log.d(TAG, "Audio quality path active; preserving user-selected capture gains")
   }
 
   /**
@@ -1891,15 +2260,8 @@ class ScreenService: Service(), ConnectChecker {
    */
   fun optimizeAudioForQuality() {
     try {
-      Log.d(TAG, "Optimizing audio settings for better quality")
-      
-      // Note: Volume levels are controlled by user via UI bars, not automatically changed
-      
-      // Apply the optimized settings
+      Log.d(TAG, "Applying stream audio levels without hidden gain overrides")
       applyStreamAudioLevels()
-      applyEnhancedAudioQuality()
-      applyAdvancedAudioFiltering()
-      
     } catch (e: Exception) {
       Log.e(TAG, "Error optimizing audio settings: ${e.message}")
     }
@@ -1909,95 +2271,14 @@ class ScreenService: Service(), ConnectChecker {
    * Apply smart hissing elimination measures that preserve microphone audio
    */
   private fun applyAntiFeedbackMeasures(mixAudioSource: MixAudioSource) {
-    try {
-      Log.d(TAG, "Applying smart hissing elimination measures")
-      
-      // Check if microphone is enabled (volume > 0)
-      val isMicrophoneEnabled = micVolume > 0
-      Log.d(TAG, "Microphone enabled: $isMicrophoneEnabled (volume: $micVolume%)")
-      
-      if (isMicrophoneEnabled) {
-        // Apply smart hissing elimination that preserves microphone
-        Log.d(TAG, "=== SMART HISSING ELIMINATION ===")
-        
-        // Smart approach: Reduce device audio when microphone is active
-        val adjustedDeviceVolume = (deviceVolume * 0.6f).coerceIn(0.1f, 0.7f) // Reduce device audio by 40%
-        val adjustedMicVolume = (micVolume / 100f).coerceIn(0.2f, 0.9f) // Keep microphone active but limit volume
-        
-        mixAudioSource.internalVolume = adjustedDeviceVolume
-        mixAudioSource.microphoneVolume = adjustedMicVolume
-        
-        Log.d(TAG, "Smart anti-feedback applied - Device: ${(adjustedDeviceVolume * 100).toInt()}%, Mic: ${(adjustedMicVolume * 100).toInt()}%")
-        Log.d(TAG, "Microphone audio preserved while reducing device audio to prevent hissing")
-        
-      } else {
-        // When microphone is disabled, use full device audio
-        mixAudioSource.internalVolume = (deviceVolume / 100f).coerceIn(0.1f, 1.0f)
-        mixAudioSource.microphoneVolume = 0f // Disable microphone completely
-        
-        Log.d(TAG, "Microphone disabled - using full device audio: ${(deviceVolume / 100f * 100).toInt()}%")
-      }
-      
-    } catch (e: Exception) {
-      Log.e(TAG, "Error applying anti-feedback measures: ${e.message}")
-    }
+    Log.d(TAG, "Anti-feedback gain override skipped for ${mixAudioSource.javaClass.simpleName}")
   }
 
   /**
    * Apply advanced audio filtering to reduce hissing and improve quality
    */
   private fun applyAdvancedAudioFiltering() {
-    try {
-      Log.d(TAG, "Applying advanced audio filtering to reduce hissing")
-      
-
-      
-      val currentAudioSource = genericStream.audioSource
-      when (currentAudioSource) {
-        is MixAudioSource -> {
-          // Apply more aggressive filtering for mix audio
-          currentAudioSource.microphoneVolume = (micVolume / 100f).coerceIn(0.3f, 0.9f) // Tighter range
-          currentAudioSource.internalVolume = (deviceVolume / 100f).coerceIn(0.3f, 0.9f) // Tighter range
-          Log.d(TAG, "Applied advanced filtering to MixAudioSource")
-        }
-        is MicrophoneSource -> {
-          // Apply filtering to microphone source
-          try {
-            val microphoneField = currentAudioSource.javaClass.getDeclaredField("microphone")
-            microphoneField.isAccessible = true
-            val microphone = microphoneField.get(currentAudioSource) as? MicrophoneManager
-            microphone?.let { mic ->
-              // Apply optimal microphone settings with tighter constraints
-              mic.setMicrophoneVolume((micVolume / 100f).coerceIn(0.3f, 0.9f))
-              Log.d(TAG, "Applied advanced filtering to MicrophoneSource")
-            }
-          } catch (e: Exception) {
-            Log.e(TAG, "Error applying advanced filtering to MicrophoneSource: ${e.message}")
-          }
-        }
-        is InternalAudioSource -> {
-          // Apply filtering to internal audio source
-          try {
-            val microphoneField = currentAudioSource.javaClass.getDeclaredField("microphone")
-            microphoneField.isAccessible = true
-            val microphone = microphoneField.get(currentAudioSource) as? MicrophoneManager
-            microphone?.let { mic ->
-              // Apply optimal internal audio settings with tighter constraints
-              mic.setInternalVolume((deviceVolume / 100f).coerceIn(0.3f, 0.9f))
-              Log.d(TAG, "Applied advanced filtering to InternalAudioSource")
-            }
-          } catch (e: Exception) {
-            Log.e(TAG, "Error applying advanced filtering to InternalAudioSource: ${e.message}")
-          }
-        }
-        else -> {
-          Log.d(TAG, "Unknown audio source type for advanced filtering: ${currentAudioSource.javaClass.simpleName}")
-        }
-      }
-      
-    } catch (e: Exception) {
-      Log.e(TAG, "Error applying advanced audio filtering: ${e.message}")
-    }
+    Log.d(TAG, "Advanced gain override skipped; user capture levels remain unchanged")
   }
 
   /**
@@ -2103,54 +2384,38 @@ class ScreenService: Service(), ConnectChecker {
   }
 
   fun restoreAudioSourceState() {
-    Log.d("ScreenService", "Restoring audio source state - isMicrophoneMuted: $isMicrophoneMuted")
-    
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-      mediaProjection?.let { projection ->
-        try {
-          if (isMicrophoneMuted) {
-            // Restore to device audio only
-            genericStream.changeAudioSource(InternalAudioSource(projection))
-            Log.d("ScreenService", "Audio source restored to device audio only")
-          } else {
-            // Restore to mix audio (device + microphone)
-            genericStream.changeAudioSource(MixAudioSource(projection))
-            Log.d("ScreenService", "Audio source restored to device audio + microphone")
-          }
-        } catch (e: Exception) {
-          Log.e("ScreenService", "Failed to restore audio source state: ${e.message}")
-        }
-      }
-    }
+    Log.d(
+      TAG,
+      "Restoring selected audio source without replacing it for mic mute; muted=$isMicrophoneMuted"
+    )
+    ensureAudioSourcePersistence()
+    applyStreamAudioLevels()
   }
 
   fun ensureAudioSourcePersistence() {
-    Log.d("ScreenService", "Ensuring audio source persistence - isMicrophoneMuted: $isMicrophoneMuted")
-    
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-      mediaProjection?.let { projection ->
-        try {
-          val currentAudioSource = genericStream.audioSource
-          Log.d("ScreenService", "Current audio source: ${currentAudioSource.javaClass.simpleName}")
-          
-          // Check if we need to restore the correct audio source
-          val shouldBeMix = !isMicrophoneMuted
-          val isCurrentlyMix = currentAudioSource is MixAudioSource
-          val isCurrentlyInternal = currentAudioSource is InternalAudioSource
-          
-          if (shouldBeMix && !isCurrentlyMix) {
-            Log.d("ScreenService", "Fixing audio source - switching to MixAudioSource")
-            genericStream.changeAudioSource(MixAudioSource(projection))
-          } else if (!shouldBeMix && !isCurrentlyInternal) {
-            Log.d("ScreenService", "Fixing audio source - switching to InternalAudioSource")
-            genericStream.changeAudioSource(InternalAudioSource(projection))
-          } else {
-            Log.d(TAG, "Audio source is already correct")
-          }
-        } catch (e: Exception) {
-          Log.e(TAG, "Failed to ensure audio source persistence: ${e.message}")
-        }
+    Log.d(
+      TAG,
+      "Ensuring selected source persistence - selected=$selectedAudioSource, muted=$isMicrophoneMuted"
+    )
+
+    try {
+      val sourceMatchesSelection = when (selectedAudioSource) {
+        R.id.audio_source_microphone -> genericStream.audioSource is PristineAudioSource
+        R.id.audio_source_internal -> genericStream.audioSource is InternalAudioSource
+        R.id.audio_source_mix,
+        R.id.audio_source_dual_channel -> genericStream.audioSource is MixAudioSource
+        else -> false
       }
+
+      if (!sourceMatchesSelection) {
+        Log.d(TAG, "Restoring selected audio source without coupling it to microphone mute")
+        toggleAudioSource(selectedAudioSource)
+      } else {
+        Log.d(TAG, "Selected audio source is already active")
+      }
+      applyStreamAudioLevels()
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to ensure audio source persistence: ${e.message}", e)
     }
   }
 
@@ -2226,13 +2491,7 @@ class ScreenService: Service(), ConnectChecker {
     resetReconnectState(clearEndpoint = true)
     try {
       if (genericStream.isStreaming) genericStream.stopStream()
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-        stopForeground(STOP_FOREGROUND_REMOVE)
-      } else {
-        @Suppress("DEPRECATION")
-        stopForeground(true)
-      }
-      stopSelf()
+      finishCaptureSessionIfIdle()
     } catch (e: Exception) {
       Log.e(TAG, "Error stopping service after retries: ${e.message}")
     }
@@ -2271,13 +2530,7 @@ class ScreenService: Service(), ConnectChecker {
     resetReconnectState(clearEndpoint = true)
     try {
       if (genericStream.isStreaming) genericStream.stopStream()
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-        stopForeground(STOP_FOREGROUND_REMOVE)
-      } else {
-        @Suppress("DEPRECATION")
-        stopForeground(true)
-      }
-      stopSelf()
+      finishCaptureSessionIfIdle()
     } catch (e: Exception) {
       Log.e(TAG, "Error stopping service after disconnect retries: ${e.message}")
     }
@@ -2503,7 +2756,7 @@ class ScreenService: Service(), ConnectChecker {
       
       // Reload volume settings from preferences
       val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-      micVolume = prefs.getInt(KEY_MIC_VOLUME, 100)
+      applyMicrophoneState(readStoredMicrophoneState(prefs))
       deviceVolume = prefs.getInt(KEY_DEVICE_VOLUME, 100)
       
       Log.d(TAG, "Reloaded volume settings - Mic: $micVolume%, Device: $deviceVolume%")
@@ -2563,16 +2816,21 @@ class ScreenService: Service(), ConnectChecker {
       
       // Get current values from SharedPreferences (which UI updates)
       val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
-      val currentMicVolume = prefs.getInt(KEY_MIC_VOLUME, micVolume)
+      val storedMicrophoneState = readStoredMicrophoneState(prefs)
+      val currentMicVolume = storedMicrophoneState.volumePercent
       val currentDeviceVolume = prefs.getInt(KEY_DEVICE_VOLUME, deviceVolume)
       
       Log.d(TAG, "Current saved values - Mic: $currentMicVolume%, Device: $currentDeviceVolume%")
       Log.d(TAG, "Service cached values - Mic: $micVolume%, Device: $deviceVolume%")
       
       // Update service variables if they differ
-      if (currentMicVolume != micVolume) {
-        Log.d(TAG, "🔄 Updating mic volume from $micVolume% to $currentMicVolume%")
-        micVolume = currentMicVolume
+      if (storedMicrophoneState != currentMicrophoneState()) {
+        Log.d(
+          TAG,
+          "🔄 Updating microphone state: volume $micVolume% -> $currentMicVolume%, " +
+            "muted $isMicrophoneMuted -> ${storedMicrophoneState.muted}"
+        )
+        applyMicrophoneState(storedMicrophoneState)
       } else {
         Log.d(TAG, "✅ Mic volume already in sync: $micVolume%")
       }

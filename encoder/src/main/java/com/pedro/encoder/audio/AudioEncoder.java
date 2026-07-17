@@ -31,6 +31,7 @@ import com.pedro.encoder.input.audio.GetMicrophoneData;
 import com.pedro.encoder.utils.CodecUtil;
 
 import java.nio.ByteBuffer;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -47,7 +48,7 @@ public class AudioEncoder extends BaseEncoder implements GetMicrophoneData {
   public static final int inputSize = 8192;
   private boolean isStereo = true;
   private GetFrame getFrame;
-  private long tsBuffer = 0;
+  private final AudioSampleClock sampleClock = new AudioSampleClock();
 
   public AudioEncoder(GetAudioData getAudioData) {
     this.getAudioData = getAudioData;
@@ -65,6 +66,7 @@ public class AudioEncoder extends BaseEncoder implements GetMicrophoneData {
     this.bitRate = bitRate;
     this.sampleRate = sampleRate;
     this.isStereo = isStereo;
+    sampleClock.configure(sampleRate, isStereo);
     isBufferMode = true;
 
     try {
@@ -121,7 +123,7 @@ public class AudioEncoder extends BaseEncoder implements GetMicrophoneData {
 
   @Override
   public void start(boolean resetTs) {
-    if (resetTs) tsBuffer = 0;
+    if (resetTs) sampleClock.reset();
     shouldReset = resetTs;
     Log.i(TAG, "started");
   }
@@ -152,11 +154,7 @@ public class AudioEncoder extends BaseEncoder implements GetMicrophoneData {
     if (timestampMode == TimestampMode.CLOCK) {
       pts = clockPts;
     } else {
-      if (tsBuffer == 0) tsBuffer = clockPts;
-      int channels = isStereo ? 2 : 1;
-      tsBuffer += (long)((double)frame.getSize() / (sampleRate * channels * 2L)) * 1_000_000L;
-      if (clockPts - tsBuffer > 500_000) tsBuffer = clockPts;
-      pts = tsBuffer;
+      pts = sampleClock.nextTimestampUs(frame.getSize(), clockPts);
     }
     return pts;
   }
@@ -180,8 +178,23 @@ public class AudioEncoder extends BaseEncoder implements GetMicrophoneData {
    */
   @Override
   public void inputPCMData(@NonNull Frame frame) {
-    if (running && !queue.offer(frame)) {
-      Log.i(TAG, "frame discarded");
+    if (!running) return;
+
+    // AudioRecord reuses its byte array on every read. Queueing that mutable array directly lets
+    // the capture thread overwrite PCM that the asynchronous codec has not consumed yet. This is
+    // most audible while streaming because video/RTMP load increases encoder queue latency.
+    //
+    // AAC-LC also consumes 1024 samples per channel. Some Android codecs expose a 4096-byte stereo
+    // input buffer even when KEY_MAX_INPUT_SIZE requested 8192. Passing an 8192-byte AudioRecord
+    // frame made BaseEncoder copy only the first half and silently discard the rest. Split and copy
+    // here so every captured sample is encoded once with continuous timestamps.
+    List<Frame> frames = type.equals(CodecUtil.AAC_MIME)
+        ? PcmFrameSplitter.splitForAac(frame, sampleRate, isStereo)
+        : Collections.singletonList(PcmFrameSplitter.immutableCopy(frame));
+    for (Frame immutableFrame : frames) {
+      if (immutableFrame != null && !queue.offer(immutableFrame)) {
+        Log.i(TAG, "frame discarded");
+      }
     }
   }
 

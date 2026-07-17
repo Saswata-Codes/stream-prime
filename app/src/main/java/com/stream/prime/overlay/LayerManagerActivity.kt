@@ -50,9 +50,14 @@ class LayerManagerActivity : AppCompatActivity() {
         Toast.makeText(this, "${it.name} is live", Toast.LENGTH_SHORT).show()
       },
       onEnabled = { project, enabled ->
-        OverlayProjectManager.save(this, project.copy(config = project.config.copy(enabled = enabled)))
-        if (OverlayProjectManager.activeId(this) == project.id) applyLiveOverlay()
+        OverlayProjectManager.setEnabled(this, project.id, enabled)
+        applyLiveOverlay()
         refresh()
+        Toast.makeText(
+          this,
+          if (enabled) "${project.name} is live" else "Overlay turned off",
+          Toast.LENGTH_SHORT
+        ).show()
       },
       onDelete = { confirmDelete(it) }
     )
@@ -66,13 +71,17 @@ class LayerManagerActivity : AppCompatActivity() {
     AlertDialog.Builder(this)
       .setTitle("Delete ${project.name}?")
       .setMessage("This overlay composition cannot be restored.")
-      .setPositiveButton("Delete") { _, _ -> OverlayProjectManager.delete(this, project.id); refresh() }
+      .setPositiveButton("Delete") { _, _ ->
+        OverlayProjectManager.delete(this, project.id)
+        applyLiveOverlay()
+        refresh()
+      }
       .setNegativeButton("Cancel", null).show()
   }
 
   private fun applyLiveOverlay() {
     runCatching {
-      startService(Intent(this, ScreenService::class.java).apply { action = "com.stream.prime.APPLY_OVERLAY" })
+      ScreenService.INSTANCE?.applyConfiguredOverlay()
     }
   }
 }
@@ -109,8 +118,9 @@ private class ProjectAdapter(
     val texts = project.config.layers.count { it.type == OverlayLayerType.TEXT }
     holder.name.text = project.name
     holder.summary.text = "$images images · $texts text · ${project.config.canvasTheme.displayName}"
-    holder.live.visibility = if (active) View.VISIBLE else View.GONE
-    holder.activate.visibility = if (active) View.GONE else View.VISIBLE
+    val live = active && project.config.enabled
+    holder.live.visibility = if (live) View.VISIBLE else View.GONE
+    holder.activate.visibility = if (live) View.GONE else View.VISIBLE
     holder.enabled.setOnCheckedChangeListener(null)
     holder.enabled.isChecked = project.config.enabled
     holder.enabled.setOnCheckedChangeListener { _, checked -> onEnabled(project, checked) }
